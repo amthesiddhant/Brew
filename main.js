@@ -283,85 +283,46 @@ function compareVersions(v1, v2) {
   return 0;
 }
 
-// Use `gh` CLI to check releases — works with private repos since gh is already authenticated
-function checkViaGhCli() {
-  return new Promise((resolve, reject) => {
-    const ghProc = spawn('gh', [
-      'api', `repos/${GITHUB_OWNER}/${GITHUB_REPO}/releases/latest`
-    ]);
+// Get GitHub token from gh CLI (works regardless of PATH since we use full path)
+function getGitHubToken() {
+  const possiblePaths = [
+    '/opt/homebrew/bin/gh',
+    '/usr/local/bin/gh',
+    `${process.env.HOME}/.aisuite/bin/gh`,
+    'gh'  // last resort: rely on PATH
+  ];
 
-    let data = '';
-    let errorData = '';
-
-    ghProc.stdout.on('data', (chunk) => { data += chunk; });
-    ghProc.stderr.on('data', (chunk) => { errorData += chunk; });
-
-    ghProc.on('close', (code) => {
-      if (code === 0 && data) {
-        try {
-          const release = JSON.parse(data);
-          const latestVersion = release.tag_name || release.name;
-          const hasUpdate = compareVersions(latestVersion, CURRENT_VERSION) > 0;
-
-          // Find the .dmg or .zip asset for macOS
-          let downloadUrl = release.html_url;
-          if (release.assets && release.assets.length > 0) {
-            const macAsset = release.assets.find(a =>
-              a.name.endsWith('.dmg') || a.name.endsWith('.zip') || a.name.includes('mac')
-            );
-            if (macAsset) {
-              downloadUrl = macAsset.browser_download_url;
-            }
-          }
-
-          resolve({
-            currentVersion: CURRENT_VERSION,
-            latestVersion: latestVersion.replace(/^v/, ''),
-            hasUpdate,
-            downloadUrl,
-            releaseUrl: release.html_url,
-            releaseNotes: release.body || '',
-            releaseName: release.name || latestVersion
-          });
-        } catch (e) {
-          reject(new Error('Failed to parse release data'));
-        }
-      } else {
-        // gh CLI not available or repo has no releases
-        if (errorData.includes('Not Found') || errorData.includes('404')) {
-          resolve({
-            currentVersion: CURRENT_VERSION,
-            latestVersion: CURRENT_VERSION,
-            hasUpdate: false,
-            downloadUrl: null,
-            releaseUrl: `https://github.com/${GITHUB_OWNER}/${GITHUB_REPO}/releases`,
-            releaseNotes: '',
-            releaseName: '',
-            noReleases: true
-          });
-        } else {
-          reject(new Error(errorData.trim() || `gh exited with code ${code}`));
-        }
-      }
-    });
-
-    ghProc.on('error', (err) => {
-      reject(new Error('gh CLI not found — install GitHub CLI to check updates'));
-    });
-  });
+  const fs = require('fs');
+  for (const ghPath of possiblePaths) {
+    try {
+      if (ghPath !== 'gh' && !fs.existsSync(ghPath)) continue;
+      const token = execSync(`"${ghPath}" auth token 2>/dev/null`, { encoding: 'utf8' }).trim();
+      if (token) return token;
+    } catch (e) {
+      continue;
+    }
+  }
+  return null;
 }
 
-// Fallback: unauthenticated HTTPS (works for public repos)
-function checkViaHTTPS() {
+// Single reliable method: authenticated HTTPS (no rate limits, works with private repos)
+function checkForUpdates() {
   return new Promise((resolve, reject) => {
+    const token = getGitHubToken();
+
+    const headers = {
+      'User-Agent': 'Brew-App',
+      'Accept': 'application/vnd.github.v3+json'
+    };
+    if (token) {
+      headers['Authorization'] = `token ${token}`;
+    }
+
     const options = {
       hostname: 'api.github.com',
       path: `/repos/${GITHUB_OWNER}/${GITHUB_REPO}/releases/latest`,
       method: 'GET',
-      headers: {
-        'User-Agent': 'Brew-App',
-        'Accept': 'application/vnd.github.v3+json'
-      }
+      headers
     };
 
     const req = https.request(options, (res) => {
@@ -374,6 +335,7 @@ function checkViaHTTPS() {
             const latestVersion = release.tag_name || release.name;
             const hasUpdate = compareVersions(latestVersion, CURRENT_VERSION) > 0;
 
+            // Find the .dmg asset for macOS
             let downloadUrl = release.html_url;
             if (release.assets && release.assets.length > 0) {
               const macAsset = release.assets.find(a =>
@@ -417,15 +379,6 @@ function checkViaHTTPS() {
     req.setTimeout(10000, () => { req.destroy(); reject(new Error('Request timed out')); });
     req.end();
   });
-}
-
-// Try gh CLI first (works with private repos), fall back to HTTPS
-async function checkForUpdates() {
-  try {
-    return await checkViaGhCli();
-  } catch (e) {
-    return await checkViaHTTPS();
-  }
 }
 
 // ===== IPC HANDLERS =====
