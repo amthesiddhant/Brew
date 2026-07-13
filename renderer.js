@@ -184,8 +184,8 @@ async function checkForUpdates() {
   }
 
   if (result.noReleases) {
-    updateLabel.textContent = 'No releases yet';
-    updateDesc.textContent = 'You have the latest build';
+    updateLabel.textContent = 'You\'re up to date!';
+    updateDesc.textContent = `v${result.currentVersion} — no newer releases found`;
     setTimeout(() => {
       updateLabel.textContent = 'Check for Updates';
       updateDesc.innerHTML = `v<span id="currentVersion">${result.currentVersion}</span>`;

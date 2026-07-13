@@ -283,7 +283,63 @@ function compareVersions(v1, v2) {
   return 0;
 }
 
-function checkForUpdates() {
+// Primary method: follow the /releases/latest redirect to extract version from URL
+// This does NOT count against the GitHub API rate limit
+function checkViaRedirect() {
+  return new Promise((resolve, reject) => {
+    const options = {
+      hostname: 'github.com',
+      path: `/${GITHUB_OWNER}/${GITHUB_REPO}/releases/latest`,
+      method: 'HEAD',
+      headers: { 'User-Agent': 'Brew-App' }
+    };
+
+    const req = https.request(options, (res) => {
+      if (res.statusCode === 302 && res.headers.location) {
+        // Location looks like: https://github.com/owner/repo/releases/tag/v1.2.0
+        const location = res.headers.location;
+        const match = location.match(/\/tag\/(.+)$/);
+        if (match) {
+          const latestVersion = match[1];
+          const hasUpdate = compareVersions(latestVersion, CURRENT_VERSION) > 0;
+          const releaseUrl = location;
+          resolve({
+            currentVersion: CURRENT_VERSION,
+            latestVersion: latestVersion.replace(/^v/, ''),
+            hasUpdate,
+            downloadUrl: releaseUrl,
+            releaseUrl,
+            releaseNotes: '',
+            releaseName: latestVersion,
+          });
+        } else {
+          reject(new Error('Could not parse release tag from redirect'));
+        }
+      } else if (res.statusCode === 404) {
+        // No releases exist
+        resolve({
+          currentVersion: CURRENT_VERSION,
+          latestVersion: CURRENT_VERSION,
+          hasUpdate: false,
+          downloadUrl: null,
+          releaseUrl: `https://github.com/${GITHUB_OWNER}/${GITHUB_REPO}/releases`,
+          releaseNotes: '',
+          releaseName: '',
+          noReleases: true
+        });
+      } else {
+        reject(new Error(`Redirect check returned status ${res.statusCode}`));
+      }
+    });
+
+    req.on('error', (err) => reject(err));
+    req.setTimeout(10000, () => { req.destroy(); reject(new Error('Request timed out')); });
+    req.end();
+  });
+}
+
+// Fallback method: use GitHub API (subject to 60 req/hr rate limit for unauthenticated)
+function checkViaAPI() {
   return new Promise((resolve, reject) => {
     const options = {
       hostname: 'api.github.com',
@@ -306,7 +362,7 @@ function checkForUpdates() {
             const hasUpdate = compareVersions(latestVersion, CURRENT_VERSION) > 0;
 
             // Find the .dmg or .zip asset for macOS
-            let downloadUrl = release.html_url; // fallback to release page
+            let downloadUrl = release.html_url;
             if (release.assets && release.assets.length > 0) {
               const macAsset = release.assets.find(a =>
                 a.name.endsWith('.dmg') || a.name.endsWith('.zip') || a.name.includes('mac')
@@ -329,7 +385,6 @@ function checkForUpdates() {
             reject(new Error('Failed to parse release data'));
           }
         } else if (res.statusCode === 404) {
-          // No releases published yet
           resolve({
             currentVersion: CURRENT_VERSION,
             latestVersion: CURRENT_VERSION,
@@ -340,23 +395,28 @@ function checkForUpdates() {
             releaseName: '',
             noReleases: true
           });
+        } else if (res.statusCode === 403) {
+          reject(new Error('Rate limited — try again later'));
         } else {
           reject(new Error(`GitHub API returned status ${res.statusCode}`));
         }
       });
     });
 
-    req.on('error', (err) => {
-      reject(err);
-    });
-
-    req.setTimeout(10000, () => {
-      req.destroy();
-      reject(new Error('Request timed out'));
-    });
-
+    req.on('error', (err) => reject(err));
+    req.setTimeout(10000, () => { req.destroy(); reject(new Error('Request timed out')); });
     req.end();
   });
+}
+
+// Try redirect first (no rate limit), fall back to API
+async function checkForUpdates() {
+  try {
+    return await checkViaRedirect();
+  } catch (e) {
+    // Redirect method failed, try API as fallback
+    return await checkViaAPI();
+  }
 }
 
 // ===== IPC HANDLERS =====
