@@ -283,63 +283,76 @@ function compareVersions(v1, v2) {
   return 0;
 }
 
-// Primary method: follow the /releases/latest redirect to extract version from URL
-// This does NOT count against the GitHub API rate limit
-function checkViaRedirect() {
+// Use `gh` CLI to check releases — works with private repos since gh is already authenticated
+function checkViaGhCli() {
   return new Promise((resolve, reject) => {
-    const options = {
-      hostname: 'github.com',
-      path: `/${GITHUB_OWNER}/${GITHUB_REPO}/releases/latest`,
-      method: 'HEAD',
-      headers: { 'User-Agent': 'Brew-App' }
-    };
+    const ghProc = spawn('gh', [
+      'api', `repos/${GITHUB_OWNER}/${GITHUB_REPO}/releases/latest`
+    ]);
 
-    const req = https.request(options, (res) => {
-      if (res.statusCode === 302 && res.headers.location) {
-        // Location looks like: https://github.com/owner/repo/releases/tag/v1.2.0
-        const location = res.headers.location;
-        const match = location.match(/\/tag\/(.+)$/);
-        if (match) {
-          const latestVersion = match[1];
+    let data = '';
+    let errorData = '';
+
+    ghProc.stdout.on('data', (chunk) => { data += chunk; });
+    ghProc.stderr.on('data', (chunk) => { errorData += chunk; });
+
+    ghProc.on('close', (code) => {
+      if (code === 0 && data) {
+        try {
+          const release = JSON.parse(data);
+          const latestVersion = release.tag_name || release.name;
           const hasUpdate = compareVersions(latestVersion, CURRENT_VERSION) > 0;
-          const releaseUrl = location;
+
+          // Find the .dmg or .zip asset for macOS
+          let downloadUrl = release.html_url;
+          if (release.assets && release.assets.length > 0) {
+            const macAsset = release.assets.find(a =>
+              a.name.endsWith('.dmg') || a.name.endsWith('.zip') || a.name.includes('mac')
+            );
+            if (macAsset) {
+              downloadUrl = macAsset.browser_download_url;
+            }
+          }
+
           resolve({
             currentVersion: CURRENT_VERSION,
             latestVersion: latestVersion.replace(/^v/, ''),
             hasUpdate,
-            downloadUrl: releaseUrl,
-            releaseUrl,
+            downloadUrl,
+            releaseUrl: release.html_url,
+            releaseNotes: release.body || '',
+            releaseName: release.name || latestVersion
+          });
+        } catch (e) {
+          reject(new Error('Failed to parse release data'));
+        }
+      } else {
+        // gh CLI not available or repo has no releases
+        if (errorData.includes('Not Found') || errorData.includes('404')) {
+          resolve({
+            currentVersion: CURRENT_VERSION,
+            latestVersion: CURRENT_VERSION,
+            hasUpdate: false,
+            downloadUrl: null,
+            releaseUrl: `https://github.com/${GITHUB_OWNER}/${GITHUB_REPO}/releases`,
             releaseNotes: '',
-            releaseName: latestVersion,
+            releaseName: '',
+            noReleases: true
           });
         } else {
-          reject(new Error('Could not parse release tag from redirect'));
+          reject(new Error(errorData.trim() || `gh exited with code ${code}`));
         }
-      } else if (res.statusCode === 404) {
-        // No releases exist
-        resolve({
-          currentVersion: CURRENT_VERSION,
-          latestVersion: CURRENT_VERSION,
-          hasUpdate: false,
-          downloadUrl: null,
-          releaseUrl: `https://github.com/${GITHUB_OWNER}/${GITHUB_REPO}/releases`,
-          releaseNotes: '',
-          releaseName: '',
-          noReleases: true
-        });
-      } else {
-        reject(new Error(`Redirect check returned status ${res.statusCode}`));
       }
     });
 
-    req.on('error', (err) => reject(err));
-    req.setTimeout(10000, () => { req.destroy(); reject(new Error('Request timed out')); });
-    req.end();
+    ghProc.on('error', (err) => {
+      reject(new Error('gh CLI not found — install GitHub CLI to check updates'));
+    });
   });
 }
 
-// Fallback method: use GitHub API (subject to 60 req/hr rate limit for unauthenticated)
-function checkViaAPI() {
+// Fallback: unauthenticated HTTPS (works for public repos)
+function checkViaHTTPS() {
   return new Promise((resolve, reject) => {
     const options = {
       hostname: 'api.github.com',
@@ -361,7 +374,6 @@ function checkViaAPI() {
             const latestVersion = release.tag_name || release.name;
             const hasUpdate = compareVersions(latestVersion, CURRENT_VERSION) > 0;
 
-            // Find the .dmg or .zip asset for macOS
             let downloadUrl = release.html_url;
             if (release.assets && release.assets.length > 0) {
               const macAsset = release.assets.find(a =>
@@ -395,8 +407,6 @@ function checkViaAPI() {
             releaseName: '',
             noReleases: true
           });
-        } else if (res.statusCode === 403) {
-          reject(new Error('Rate limited — try again later'));
         } else {
           reject(new Error(`GitHub API returned status ${res.statusCode}`));
         }
@@ -409,13 +419,12 @@ function checkViaAPI() {
   });
 }
 
-// Try redirect first (no rate limit), fall back to API
+// Try gh CLI first (works with private repos), fall back to HTTPS
 async function checkForUpdates() {
   try {
-    return await checkViaRedirect();
+    return await checkViaGhCli();
   } catch (e) {
-    // Redirect method failed, try API as fallback
-    return await checkViaAPI();
+    return await checkViaHTTPS();
   }
 }
 
