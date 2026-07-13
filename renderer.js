@@ -162,16 +162,18 @@ const updateNotes = document.getElementById('updateNotes');
 const updateIcon = document.getElementById('updateIcon');
 const updateSection = document.getElementById('updateSection');
 
+const updateIconWrap = document.getElementById('updateIconWrap');
+
 async function checkForUpdates() {
-  // Show loading state
-  updateLabel.textContent = 'Checking...';
-  updateIcon.classList.add('spinning');
+  // Show loading state with coffee pour animation
+  updateLabel.textContent = 'Brewing update check...';
+  updateIconWrap.classList.add('checking');
   updateBadge.style.display = 'none';
   updateDetails.style.display = 'none';
 
   const result = await window.brew.checkForUpdates();
 
-  updateIcon.classList.remove('spinning');
+  updateIconWrap.classList.remove('checking');
 
   if (!result.success) {
     updateLabel.textContent = 'Update check failed';

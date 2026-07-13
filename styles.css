@@ -741,6 +741,8 @@ body.brewing::before {
   justify-content: center;
   color: var(--text-secondary);
   transition: color 0.3s ease;
+  position: relative;
+  overflow: visible;
 }
 
 .update-section.has-update .update-icon-wrap {
@@ -751,15 +753,120 @@ body.brewing::before {
   width: 20px;
   height: 20px;
   transition: transform 0.3s ease;
+  position: relative;
+  z-index: 2;
 }
 
-.update-svg.spinning {
-  animation: spin 1s linear infinite;
+/* Coffee fill animation (inside the cup icon) */
+.coffee-fill {
+  position: absolute;
+  bottom: 4px;
+  left: 6px;
+  right: 10px;
+  height: 0%;
+  background: linear-gradient(180deg, #d4915c, #8b5e3c);
+  border-radius: 0 0 4px 4px;
+  opacity: 0;
+  transition: height 0.3s ease, opacity 0.3s ease;
+  z-index: 1;
 }
 
-@keyframes spin {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
+.update-icon-wrap.checking .coffee-fill {
+  opacity: 0.9;
+  animation: coffee-pour 2s ease-in-out infinite;
+}
+
+@keyframes coffee-pour {
+  0% { height: 0%; opacity: 0.4; }
+  20% { opacity: 0.9; }
+  60% { height: 55%; }
+  80% { height: 55%; opacity: 0.9; }
+  90% { height: 0%; opacity: 0.4; }
+  100% { height: 0%; opacity: 0; }
+}
+
+/* Steam wisps rising from the cup */
+.update-steam {
+  position: absolute;
+  top: -4px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 20px;
+  height: 16px;
+  pointer-events: none;
+  opacity: 0;
+  z-index: 3;
+}
+
+.update-icon-wrap.checking .update-steam {
+  opacity: 1;
+}
+
+.update-steam-wisp {
+  position: absolute;
+  bottom: 0;
+  width: 2px;
+  height: 8px;
+  background: rgba(255, 255, 255, 0.4);
+  border-radius: 2px;
+  opacity: 0;
+  filter: blur(0.5px);
+}
+
+.update-icon-wrap.checking .update-steam-wisp {
+  animation: steam-rise 1.8s ease-out infinite;
+}
+
+.update-steam-wisp.w1 {
+  left: 5px;
+  animation-delay: 0s !important;
+}
+
+.update-steam-wisp.w2 {
+  left: 10px;
+  animation-delay: 0.6s !important;
+}
+
+.update-steam-wisp.w3 {
+  left: 15px;
+  animation-delay: 1.2s !important;
+}
+
+@keyframes steam-rise {
+  0% { transform: translateY(0) scaleX(1); opacity: 0; }
+  15% { opacity: 0.7; }
+  50% { transform: translateY(-10px) scaleX(1.3); opacity: 0.4; }
+  100% { transform: translateY(-18px) scaleX(0.5); opacity: 0; }
+}
+
+/* Subtle bounce on the cup icon while checking */
+.update-icon-wrap.checking .update-svg {
+  animation: cup-bounce 1.2s ease-in-out infinite;
+}
+
+@keyframes cup-bounce {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-2px); }
+}
+
+/* Warm glow around icon while checking */
+.update-icon-wrap.checking {
+  color: #d4915c;
+}
+
+.update-icon-wrap.checking::after {
+  content: '';
+  position: absolute;
+  inset: -3px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(212, 145, 92, 0.2) 0%, transparent 70%);
+  animation: warm-glow 2s ease-in-out infinite;
+  z-index: 0;
+}
+
+@keyframes warm-glow {
+  0%, 100% { opacity: 0.5; transform: scale(1); }
+  50% { opacity: 1; transform: scale(1.15); }
 }
 
 .update-info {
