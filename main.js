@@ -471,8 +471,108 @@ ipcMain.handle('check-for-updates', async () => {
   }
 });
 
-ipcMain.handle('open-download-url', (event, url) => {
-  shell.openExternal(url);
+ipcMain.handle('download-and-install-update', async (event, downloadUrl) => {
+  try {
+    const os = require('os');
+    const fs = require('fs');
+    const dmgPath = path.join(os.tmpdir(), 'Brew-update.dmg');
+
+    // Notify renderer: download starting
+    mainWindow.webContents.send('update-progress', { stage: 'downloading', percent: 0 });
+
+    // Download the DMG file
+    await new Promise((resolve, reject) => {
+      const downloadFile = (url) => {
+        const client = url.startsWith('https') ? https : require('http');
+        client.get(url, { headers: { 'User-Agent': 'Brew-App' } }, (res) => {
+          // Follow redirects (GitHub uses them for asset downloads)
+          if (res.statusCode === 302 || res.statusCode === 301) {
+            downloadFile(res.headers.location);
+            return;
+          }
+
+          if (res.statusCode !== 200) {
+            reject(new Error(`Download failed with status ${res.statusCode}`));
+            return;
+          }
+
+          const totalSize = parseInt(res.headers['content-length'], 10) || 0;
+          let downloaded = 0;
+          const fileStream = fs.createWriteStream(dmgPath);
+
+          res.on('data', (chunk) => {
+            downloaded += chunk.length;
+            if (totalSize > 0) {
+              const percent = Math.round((downloaded / totalSize) * 100);
+              mainWindow.webContents.send('update-progress', { stage: 'downloading', percent });
+            }
+          });
+
+          res.pipe(fileStream);
+
+          fileStream.on('finish', () => {
+            fileStream.close();
+            resolve();
+          });
+
+          fileStream.on('error', (err) => {
+            fs.unlink(dmgPath, () => {});
+            reject(err);
+          });
+        }).on('error', reject);
+      };
+
+      downloadFile(downloadUrl);
+    });
+
+    // Notify renderer: installing
+    mainWindow.webContents.send('update-progress', { stage: 'installing', percent: 100 });
+
+    // Mount the DMG and copy the app
+    const { execSync: execSyncLocal } = require('child_process');
+
+    // Mount DMG
+    const mountOutput = execSyncLocal(`hdiutil attach "${dmgPath}" -nobrowse -quiet`, { encoding: 'utf8' });
+    const mountMatch = mountOutput.match(/\/Volumes\/.+/);
+    const volumePath = mountMatch ? mountMatch[0].trim() : '/Volumes/Brew';
+
+    // Find the .app in the mounted volume
+    const appsInVolume = fs.readdirSync(volumePath).filter(f => f.endsWith('.app'));
+    if (appsInVolume.length === 0) {
+      execSyncLocal(`hdiutil detach "${volumePath}" -quiet`, { encoding: 'utf8' });
+      throw new Error('No .app found in the DMG');
+    }
+
+    const appName = appsInVolume[0];
+    const sourceApp = path.join(volumePath, appName);
+    const destApp = `/Applications/${appName}`;
+
+    // Copy new app to Applications (replace existing)
+    execSyncLocal(`rm -rf "${destApp}"`, { encoding: 'utf8' });
+    execSyncLocal(`cp -R "${sourceApp}" "${destApp}"`, { encoding: 'utf8' });
+
+    // Unmount DMG
+    execSyncLocal(`hdiutil detach "${volumePath}" -quiet`, { encoding: 'utf8' });
+
+    // Clean up temp file
+    fs.unlink(dmgPath, () => {});
+
+    // Notify renderer: done
+    mainWindow.webContents.send('update-progress', { stage: 'done', percent: 100 });
+
+    return { success: true };
+  } catch (err) {
+    mainWindow.webContents.send('update-progress', { stage: 'error', error: err.message });
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('restart-app', () => {
+  app.isQuitting = true;
+  stopCaffeinate();
+  stopMouseJiggle();
+  app.relaunch();
+  app.quit();
 });
 
 ipcMain.handle('get-app-version', () => {

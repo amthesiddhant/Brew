@@ -222,10 +222,59 @@ async function checkForUpdates() {
 }
 
 async function downloadUpdate() {
-  if (updateDownloadUrl) {
-    await window.brew.openDownloadUrl(updateDownloadUrl);
+  if (!updateDownloadUrl) return;
+
+  const btnUpdate = document.getElementById('btnUpdate');
+  const updateProgress = document.getElementById('updateProgress');
+  const btnRestart = document.getElementById('btnRestart');
+
+  // Hide button, show progress
+  btnUpdate.style.display = 'none';
+  updateProgress.style.display = 'block';
+
+  const result = await window.brew.downloadAndInstall(updateDownloadUrl);
+
+  if (!result.success) {
+    // Show error and restore button
+    updateProgress.style.display = 'none';
+    btnUpdate.style.display = 'flex';
+    updateLabel.textContent = 'Install failed';
+    updateDesc.textContent = result.error || 'Unknown error';
   }
 }
+
+function restartApp() {
+  window.brew.restartApp();
+}
+
+// Listen for download/install progress updates
+window.brew.onUpdateProgress((progress) => {
+  const progressLabel = document.getElementById('updateProgressLabel');
+  const progressFill = document.getElementById('updateProgressFill');
+  const progressPercent = document.getElementById('updateProgressPercent');
+  const updateProgress = document.getElementById('updateProgress');
+  const btnRestart = document.getElementById('btnRestart');
+
+  if (progress.stage === 'downloading') {
+    progressLabel.textContent = 'Downloading...';
+    progressFill.style.width = `${progress.percent}%`;
+    progressPercent.textContent = `${progress.percent}%`;
+  } else if (progress.stage === 'installing') {
+    progressLabel.textContent = 'Installing...';
+    progressFill.style.width = '100%';
+    progressPercent.textContent = '';
+    progressFill.classList.add('installing');
+  } else if (progress.stage === 'done') {
+    updateProgress.style.display = 'none';
+    btnRestart.style.display = 'flex';
+    updateLabel.textContent = 'Update Installed!';
+    updateDesc.textContent = 'Restart to use the new version';
+  } else if (progress.stage === 'error') {
+    progressLabel.textContent = `Error: ${progress.error}`;
+    progressFill.style.width = '100%';
+    progressFill.classList.add('error');
+  }
+});
 
 // Set initial version display
 async function initVersion() {

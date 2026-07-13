@@ -986,5 +986,99 @@ body.brewing::before {
   height: 16px;
 }
 
+/* Update Progress Bar */
+.update-progress {
+  margin-top: 12px;
+}
+
+.update-progress-label {
+  font-size: 11px;
+  color: var(--text-secondary);
+  margin-bottom: 6px;
+}
+
+.update-progress-bar {
+  width: 100%;
+  height: 6px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.update-progress-fill {
+  height: 100%;
+  width: 0%;
+  background: linear-gradient(90deg, #3b82f6, #60a5fa);
+  border-radius: 3px;
+  transition: width 0.3s ease;
+  position: relative;
+}
+
+.update-progress-fill::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.3), transparent);
+  animation: progress-shimmer 1.5s infinite;
+}
+
+@keyframes progress-shimmer {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
+}
+
+.update-progress-fill.installing {
+  background: linear-gradient(90deg, #d4915c, #f59e0b);
+  animation: installing-pulse 1s ease-in-out infinite;
+}
+
+@keyframes installing-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
+}
+
+.update-progress-fill.error {
+  background: linear-gradient(90deg, #ef4444, #dc2626);
+}
+
+.update-progress-percent {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 4px;
+  text-align: right;
+}
+
+/* Restart Button */
+.btn-restart {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  padding: 10px 16px;
+  background: linear-gradient(135deg, #10b981, #059669);
+  border: none;
+  border-radius: 8px;
+  color: white;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  -webkit-app-region: no-drag;
+  animation: slide-up 0.3s ease-out;
+}
+
+.btn-restart:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px rgba(16, 185, 129, 0.4);
+}
+
+.btn-restart:active {
+  transform: translateY(0) scale(0.98);
+}
+
 /* Add 8th child for animation stagger */
 .container > *:nth-child(8) { animation-delay: 0.8s; }

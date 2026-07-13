@@ -137,13 +137,33 @@
         <div class="update-details-content">
           <p class="update-new-version">Version <span id="latestVersion"></span> available</p>
           <p class="update-notes" id="updateNotes"></p>
+
+          <!-- Download & Install button -->
           <button class="btn-update" id="btnUpdate" onclick="downloadUpdate()">
             <svg viewBox="0 0 24 24" class="btn-update-icon">
               <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
               <polyline points="7 10 12 15 17 10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
               <line x1="12" y1="15" x2="12" y2="3" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
             </svg>
-            <span>Download Update</span>
+            <span>Download &amp; Install</span>
+          </button>
+
+          <!-- Progress bar (shown during download) -->
+          <div class="update-progress" id="updateProgress" style="display: none;">
+            <div class="update-progress-label" id="updateProgressLabel">Downloading...</div>
+            <div class="update-progress-bar">
+              <div class="update-progress-fill" id="updateProgressFill"></div>
+            </div>
+            <div class="update-progress-percent" id="updateProgressPercent">0%</div>
+          </div>
+
+          <!-- Restart button (shown after install) -->
+          <button class="btn-restart" id="btnRestart" style="display: none;" onclick="restartApp()">
+            <svg viewBox="0 0 24 24" class="btn-update-icon">
+              <path d="M23 4v6h-6" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+              <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+            <span>Restart Brew</span>
           </button>
         </div>
       </div>
