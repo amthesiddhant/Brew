@@ -1,0 +1,24 @@
+{
+  "name": "brew",
+  "version": "1.0.0",
+  "description": "Brew - Keep your MacBook awake with a fresh cup of coffee",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "build": "electron-builder --mac"
+  },
+  "author": "Claude AI",
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "^28.0.0",
+    "electron-builder": "^24.9.1"
+  },
+  "build": {
+    "appId": "com.brew.app",
+    "productName": "Brew",
+    "mac": {
+      "category": "public.app-category.utilities",
+      "icon": "assets/icon.icns"
+    }
+  }
+}
