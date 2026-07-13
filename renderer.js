@@ -148,10 +148,99 @@ function updateTimer() {
   timerBarFill.style.width = `${progress}%`;
 }
 
+// ===== UPDATE FEATURE =====
+
+let updateDownloadUrl = null;
+
+const updateLabel = document.getElementById('updateLabel');
+const updateDesc = document.getElementById('updateDesc');
+const currentVersionEl = document.getElementById('currentVersion');
+const updateBadge = document.getElementById('updateBadge');
+const updateDetails = document.getElementById('updateDetails');
+const latestVersionEl = document.getElementById('latestVersion');
+const updateNotes = document.getElementById('updateNotes');
+const updateIcon = document.getElementById('updateIcon');
+const updateSection = document.getElementById('updateSection');
+
+async function checkForUpdates() {
+  // Show loading state
+  updateLabel.textContent = 'Checking...';
+  updateIcon.classList.add('spinning');
+  updateBadge.style.display = 'none';
+  updateDetails.style.display = 'none';
+
+  const result = await window.brew.checkForUpdates();
+
+  updateIcon.classList.remove('spinning');
+
+  if (!result.success) {
+    updateLabel.textContent = 'Update check failed';
+    updateDesc.textContent = result.error || 'Network error';
+    setTimeout(() => {
+      updateLabel.textContent = 'Check for Updates';
+      updateDesc.innerHTML = `v<span id="currentVersion">${currentVersionEl.textContent}</span>`;
+    }, 3000);
+    return;
+  }
+
+  if (result.noReleases) {
+    updateLabel.textContent = 'No releases yet';
+    updateDesc.textContent = 'You have the latest build';
+    setTimeout(() => {
+      updateLabel.textContent = 'Check for Updates';
+      updateDesc.innerHTML = `v<span id="currentVersion">${result.currentVersion}</span>`;
+    }, 3000);
+    return;
+  }
+
+  currentVersionEl.textContent = result.currentVersion;
+
+  if (result.hasUpdate) {
+    updateLabel.textContent = 'Update Available!';
+    updateDesc.textContent = `v${result.currentVersion} → v${result.latestVersion}`;
+    updateBadge.style.display = 'flex';
+    latestVersionEl.textContent = result.latestVersion;
+    updateNotes.textContent = result.releaseNotes
+      ? result.releaseNotes.substring(0, 150) + (result.releaseNotes.length > 150 ? '...' : '')
+      : 'A new version is available.';
+    updateDetails.style.display = 'block';
+    updateDownloadUrl = result.downloadUrl || result.releaseUrl;
+    updateSection.classList.add('has-update');
+  } else {
+    updateLabel.textContent = 'You\'re up to date!';
+    updateDesc.textContent = `v${result.currentVersion} is the latest`;
+    updateBadge.style.display = 'none';
+    updateDetails.style.display = 'none';
+    updateSection.classList.remove('has-update');
+    setTimeout(() => {
+      updateLabel.textContent = 'Check for Updates';
+      updateDesc.innerHTML = `v<span id="currentVersion">${result.currentVersion}</span>`;
+    }, 3000);
+  }
+}
+
+async function downloadUpdate() {
+  if (updateDownloadUrl) {
+    await window.brew.openDownloadUrl(updateDownloadUrl);
+  }
+}
+
+// Set initial version display
+async function initVersion() {
+  const version = await window.brew.getAppVersion();
+  currentVersionEl.textContent = version;
+}
+
 // Listen for status changes from main process
 window.brew.onStatusChanged((status) => {
   updateUI(status);
 });
 
+// Listen for update check trigger from tray menu
+window.brew.onTriggerUpdateCheck(() => {
+  checkForUpdates();
+});
+
 // Initialize on load
 init();
+initVersion();

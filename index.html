@@ -101,6 +101,46 @@
       </div>
     </div>
 
+    <!-- Update Section -->
+    <div class="update-section" id="updateSection">
+      <div class="update-row" onclick="checkForUpdates()">
+        <div class="update-icon-wrap">
+          <svg viewBox="0 0 24 24" class="update-svg" id="updateIcon">
+            <path d="M21 12a9 9 0 0 0-9-9M3 12a9 9 0 0 0 9 9" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+            <path d="M12 3v4l3-2" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M12 21v-4l-3 2" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </div>
+        <div class="update-info">
+          <span class="update-label" id="updateLabel">Check for Updates</span>
+          <span class="update-desc" id="updateDesc">v<span id="currentVersion">1.0.0</span></span>
+        </div>
+        <div class="update-badge" id="updateBadge" style="display: none;">
+          <span>NEW</span>
+        </div>
+        <div class="update-arrow" id="updateArrow">
+          <svg viewBox="0 0 24 24" width="16" height="16">
+            <path d="M9 18l6-6-6-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </div>
+      </div>
+      <!-- Update details panel (shown when update available) -->
+      <div class="update-details" id="updateDetails" style="display: none;">
+        <div class="update-details-content">
+          <p class="update-new-version">Version <span id="latestVersion"></span> available</p>
+          <p class="update-notes" id="updateNotes"></p>
+          <button class="btn-update" id="btnUpdate" onclick="downloadUpdate()">
+            <svg viewBox="0 0 24 24" class="btn-update-icon">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+              <polyline points="7 10 12 15 17 10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+              <line x1="12" y1="15" x2="12" y2="3" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+            </svg>
+            <span>Download Update</span>
+          </button>
+        </div>
+      </div>
+    </div>
+
     <!-- Footer -->
     <div class="footer">
       <p>Powered by macOS caffeinate</p>
