@@ -472,74 +472,79 @@ ipcMain.handle('check-for-updates', async () => {
 });
 
 ipcMain.handle('download-and-install-update', async (event, downloadUrl) => {
-  try {
-    const os = require('os');
-    const fs = require('fs');
-    const dmgPath = path.join(os.tmpdir(), 'Brew-update.dmg');
+  const os = require('os');
+  const fs = require('fs');
+  const dmgPath = path.join(os.tmpdir(), 'Brew-update.dmg');
 
+  try {
     // Notify renderer: download starting
     mainWindow.webContents.send('update-progress', { stage: 'downloading', percent: 0 });
 
-    // Download the DMG file
+    // Use curl to download — it handles all GitHub redirects properly
     await new Promise((resolve, reject) => {
-      const downloadFile = (url) => {
-        const client = url.startsWith('https') ? https : require('http');
-        client.get(url, { headers: { 'User-Agent': 'Brew-App' } }, (res) => {
-          // Follow redirects (GitHub uses them for asset downloads)
-          if (res.statusCode === 302 || res.statusCode === 301) {
-            downloadFile(res.headers.location);
-            return;
-          }
+      // Remove old file if exists
+      try { fs.unlinkSync(dmgPath); } catch (e) {}
 
-          if (res.statusCode !== 200) {
-            reject(new Error(`Download failed with status ${res.statusCode}`));
-            return;
-          }
+      const curlProc = spawn('curl', [
+        '-L',                   // follow redirects
+        '-o', dmgPath,          // output file
+        '-#',                   // progress bar on stderr
+        '-H', 'Accept: application/octet-stream',
+        downloadUrl
+      ]);
 
-          const totalSize = parseInt(res.headers['content-length'], 10) || 0;
-          let downloaded = 0;
-          const fileStream = fs.createWriteStream(dmgPath);
+      let stderrData = '';
+      curlProc.stderr.on('data', (chunk) => {
+        stderrData += chunk.toString();
+        // Parse curl progress (e.g., "## 45.0%")
+        const match = stderrData.match(/(\d+\.?\d*)%/g);
+        if (match) {
+          const lastPercent = Math.round(parseFloat(match[match.length - 1]));
+          mainWindow.webContents.send('update-progress', { stage: 'downloading', percent: lastPercent });
+        }
+      });
 
-          res.on('data', (chunk) => {
-            downloaded += chunk.length;
-            if (totalSize > 0) {
-              const percent = Math.round((downloaded / totalSize) * 100);
-              mainWindow.webContents.send('update-progress', { stage: 'downloading', percent });
+      curlProc.on('close', (code) => {
+        if (code === 0) {
+          // Verify the file is actually a DMG (check file size and magic bytes)
+          try {
+            const stats = fs.statSync(dmgPath);
+            if (stats.size < 1000000) { // Less than 1MB is suspicious
+              reject(new Error('Downloaded file is too small — may not be a valid DMG'));
+              return;
             }
-          });
+          } catch (e) {
+            reject(new Error('Download failed — file not found'));
+            return;
+          }
+          resolve();
+        } else {
+          reject(new Error(`Download failed (curl exit code ${code})`));
+        }
+      });
 
-          res.pipe(fileStream);
-
-          fileStream.on('finish', () => {
-            fileStream.close();
-            resolve();
-          });
-
-          fileStream.on('error', (err) => {
-            fs.unlink(dmgPath, () => {});
-            reject(err);
-          });
-        }).on('error', reject);
-      };
-
-      downloadFile(downloadUrl);
+      curlProc.on('error', (err) => {
+        reject(new Error(`Failed to start download: ${err.message}`));
+      });
     });
 
     // Notify renderer: installing
     mainWindow.webContents.send('update-progress', { stage: 'installing', percent: 100 });
 
-    // Mount the DMG and copy the app
-    const { execSync: execSyncLocal } = require('child_process');
+    // Mount the DMG (without -quiet so we get the mount path)
+    const mountOutput = execSync(`hdiutil attach "${dmgPath}" -nobrowse`, { encoding: 'utf8' });
 
-    // Mount DMG
-    const mountOutput = execSyncLocal(`hdiutil attach "${dmgPath}" -nobrowse -quiet`, { encoding: 'utf8' });
-    const mountMatch = mountOutput.match(/\/Volumes\/.+/);
-    const volumePath = mountMatch ? mountMatch[0].trim() : '/Volumes/Brew';
+    // Parse mount point from hdiutil output (last column of last line with /Volumes)
+    const volumeLines = mountOutput.split('\n').filter(l => l.includes('/Volumes/'));
+    if (volumeLines.length === 0) {
+      throw new Error('Failed to mount DMG — no volume found');
+    }
+    const volumePath = volumeLines[0].match(/\/Volumes\/.+/)[0].trim();
 
     // Find the .app in the mounted volume
     const appsInVolume = fs.readdirSync(volumePath).filter(f => f.endsWith('.app'));
     if (appsInVolume.length === 0) {
-      execSyncLocal(`hdiutil detach "${volumePath}" -quiet`, { encoding: 'utf8' });
+      execSync(`hdiutil detach "${volumePath}"`, { encoding: 'utf8' });
       throw new Error('No .app found in the DMG');
     }
 
@@ -548,11 +553,11 @@ ipcMain.handle('download-and-install-update', async (event, downloadUrl) => {
     const destApp = `/Applications/${appName}`;
 
     // Copy new app to Applications (replace existing)
-    execSyncLocal(`rm -rf "${destApp}"`, { encoding: 'utf8' });
-    execSyncLocal(`cp -R "${sourceApp}" "${destApp}"`, { encoding: 'utf8' });
+    execSync(`rm -rf "${destApp}"`, { encoding: 'utf8' });
+    execSync(`cp -R "${sourceApp}" "${destApp}"`, { encoding: 'utf8' });
 
     // Unmount DMG
-    execSyncLocal(`hdiutil detach "${volumePath}" -quiet`, { encoding: 'utf8' });
+    execSync(`hdiutil detach "${volumePath}" -quiet`, { encoding: 'utf8' });
 
     // Clean up temp file
     fs.unlink(dmgPath, () => {});
@@ -562,6 +567,8 @@ ipcMain.handle('download-and-install-update', async (event, downloadUrl) => {
 
     return { success: true };
   } catch (err) {
+    // Clean up on failure
+    try { fs.unlinkSync(dmgPath); } catch (e) {}
     mainWindow.webContents.send('update-progress', { stage: 'error', error: err.message });
     return { success: false, error: err.message };
   }
