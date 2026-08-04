@@ -1,5 +1,6 @@
 let isAwake = false;
 let isSlackMode = false;
+let isOmniMode = false;
 let timerInterval = null;
 let startTime = null;
 
@@ -74,10 +75,17 @@ async function toggleSlackMode() {
   updateUI(status);
 }
 
+// Toggle Omni Mode
+async function toggleOmniMode() {
+  const status = await window.brew.toggleOmniMode();
+  updateUI(status);
+}
+
 // Update UI based on status
 function updateUI(status) {
   isAwake = status.isAwake;
   isSlackMode = status.isSlackMode;
+  isOmniMode = status.isOmniMode;
 
   // Brew state
   if (isAwake) {
@@ -86,8 +94,11 @@ function updateUI(status) {
     btnOff.classList.remove('active');
     timerSection.classList.add('active');
 
-    if (isSlackMode) {
-      statusText.textContent = 'Brewing + Slack Online';
+    const extras = [];
+    if (isSlackMode) extras.push('Slack');
+    if (isOmniMode) extras.push('Omni');
+    if (extras.length > 0) {
+      statusText.textContent = `Brewing + ${extras.join(' + ')} Online`;
     } else {
       statusText.textContent = 'Brewing... Mac staying awake';
     }
@@ -111,6 +122,20 @@ function updateUI(status) {
     toggleSwitch.classList.remove('active');
     slackToggleRow.classList.remove('active');
     slackDesc.textContent = 'Simulates activity every 4 min';
+  }
+
+  // Omni mode state
+  const omniToggleSwitch = document.getElementById('omniToggleSwitch');
+  const omniToggleRow = document.querySelector('.omni-toggle-row');
+  const omniDesc = document.getElementById('omniDesc');
+  if (isOmniMode) {
+    omniToggleSwitch.classList.add('active');
+    omniToggleRow.classList.add('active');
+    omniDesc.textContent = 'Active - refreshing every 3 min';
+  } else {
+    omniToggleSwitch.classList.remove('active');
+    omniToggleRow.classList.remove('active');
+    omniDesc.textContent = 'Refreshes presence every 3 min';
   }
 }
 

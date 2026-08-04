@@ -685,6 +685,97 @@ body.brewing::before {
   50% { opacity: 0.7; box-shadow: 0 0 0 6px rgba(74, 163, 99, 0); }
 }
 
+/* Omni Toggle (mirrors slack toggle with blue accent) */
+.omni-toggle {
+  width: 100%;
+  -webkit-app-region: no-drag;
+}
+
+.omni-toggle-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  position: relative;
+}
+
+.omni-toggle-row:hover {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.15);
+}
+
+.omni-toggle-row.active {
+  background: rgba(59, 130, 246, 0.1);
+  border-color: rgba(59, 130, 246, 0.3);
+}
+
+.omni-icon-wrap {
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-secondary);
+  transition: color 0.3s ease;
+}
+
+.omni-toggle-row.active .omni-icon-wrap {
+  color: #3b82f6;
+}
+
+.omni-svg {
+  width: 22px;
+  height: 22px;
+}
+
+.omni-info {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.omni-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  transition: color 0.3s ease;
+}
+
+.omni-desc {
+  font-size: 10px;
+  color: var(--text-muted);
+  transition: color 0.3s ease;
+}
+
+.omni-toggle-row.active::before {
+  content: '';
+  position: absolute;
+  right: 60px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 6px;
+  height: 6px;
+  background: #3b82f6;
+  border-radius: 50%;
+  animation: omni-pulse 2s ease-in-out infinite;
+}
+
+.omni-toggle-row.active .toggle-switch.active {
+  background: #3b82f6;
+  box-shadow: 0 0 12px rgba(59, 130, 246, 0.4);
+}
+
+@keyframes omni-pulse {
+  0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.4); }
+  50% { opacity: 0.7; box-shadow: 0 0 0 6px rgba(59, 130, 246, 0); }
+}
+
 /* Smooth entrance animation */
 .container > * {
   animation: slide-up 0.6s ease-out backwards;

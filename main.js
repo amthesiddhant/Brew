@@ -8,10 +8,19 @@ let tray = null;
 let caffeinateProcess = null;
 let isAwake = false;
 let isSlackMode = false;
+let isOmniMode = false;
 let mouseJiggleInterval = null;
+let omniKeepAliveInterval = null;
 
 // Mouse jiggle interval in ms (every 4 minutes - well under Slack's 10min timeout)
 const JIGGLE_INTERVAL = 4 * 60 * 1000;
+
+// Omni-Channel keep-alive interval (every 3 minutes)
+const OMNI_INTERVAL = 3 * 60 * 1000;
+
+// Salesforce Omni-Channel config
+const SF_INSTANCE_URL = 'https://gus.my.salesforce.com';
+const SF_PRESENCE_STATUS_ID = '0N53y000000k9c5CAA'; // "Available - Case"
 
 // GitHub repo for update checks
 const GITHUB_OWNER = 'amthesiddhant';
@@ -84,9 +93,13 @@ function createTray() {
 }
 
 function updateTrayMenu() {
-  const statusLabel = isAwake
-    ? (isSlackMode ? 'Brewing + Slack Online' : 'Brewing')
-    : 'Idle';
+  let statusLabel = 'Idle';
+  if (isAwake) {
+    const extras = [];
+    if (isSlackMode) extras.push('Slack');
+    if (isOmniMode) extras.push('Omni');
+    statusLabel = extras.length > 0 ? `Brewing + ${extras.join(' + ')}` : 'Brewing';
+  }
 
   const contextMenu = Menu.buildFromTemplate([
     {
@@ -111,6 +124,16 @@ function updateTrayMenu() {
           stopMouseJiggle();
         } else {
           startMouseJiggle();
+        }
+      }
+    },
+    {
+      label: `Omni Mode: ${isOmniMode ? 'ON' : 'OFF'}`,
+      click: () => {
+        if (isOmniMode) {
+          stopOmniKeepAlive();
+        } else {
+          startOmniKeepAlive();
         }
       }
     },
@@ -145,6 +168,7 @@ function updateTrayMenu() {
         app.isQuitting = true;
         stopCaffeinate();
         stopMouseJiggle();
+        stopOmniKeepAlive();
         app.quit();
       }
     }
@@ -261,11 +285,128 @@ function stopMouseJiggle() {
   updateTrayMenu();
 }
 
+// ===== OMNI-CHANNEL KEEP-ALIVE =====
+
+function getSfAccessToken() {
+  const fs = require('fs');
+  const os = require('os');
+
+  // Read directly from the sf auth file (non-interactive, fast)
+  const authFilePaths = [
+    path.join(os.homedir(), '.sfdx', 'ssenapati@gus.com.json'),
+  ];
+
+  for (const authPath of authFilePaths) {
+    try {
+      if (!fs.existsSync(authPath)) continue;
+      const data = JSON.parse(fs.readFileSync(authPath, 'utf8'));
+      if (data.accessToken && data.accessToken.length > 20) {
+        return data.accessToken;
+      }
+    } catch (e) {
+      continue;
+    }
+  }
+
+  // Fallback: try sf CLI with auto-confirm
+  const possiblePaths = [
+    '/Users/ssenapati/.aisuite/bin/sf',
+    '/opt/homebrew/bin/sf',
+    '/usr/local/bin/sf',
+  ];
+
+  for (const sfPath of possiblePaths) {
+    try {
+      if (!fs.existsSync(sfPath)) continue;
+      const token = execSync(
+        `echo "y" | "${sfPath}" org auth show-access-token --target-org orgcs 2>/dev/null`,
+        { encoding: 'utf8', timeout: 10000 }
+      ).trim();
+      if (token && token.length > 20) return token;
+    } catch (e) {
+      continue;
+    }
+  }
+  return null;
+}
+
+function omniSetPresence() {
+  const token = getSfAccessToken();
+  if (!token) {
+    console.error('Omni keep-alive: failed to get SF access token');
+    return;
+  }
+
+  const url = new URL('/services/data/v62.0/connect/presence', SF_INSTANCE_URL);
+  const postData = JSON.stringify({
+    servicePresenceStatusId: SF_PRESENCE_STATUS_ID
+  });
+
+  const options = {
+    hostname: url.hostname,
+    path: url.pathname,
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'Content-Type': 'application/json',
+      'Content-Length': Buffer.byteLength(postData)
+    }
+  };
+
+  const req = https.request(options, (res) => {
+    let data = '';
+    res.on('data', (chunk) => { data += chunk; });
+    res.on('end', () => {
+      if (res.statusCode >= 200 && res.statusCode < 300) {
+        console.log('Omni keep-alive: presence refreshed');
+      } else {
+        console.error(`Omni keep-alive: API returned ${res.statusCode}`, data);
+      }
+    });
+  });
+
+  req.on('error', (err) => {
+    console.error('Omni keep-alive: request error', err.message);
+  });
+
+  req.setTimeout(10000, () => { req.destroy(); });
+  req.write(postData);
+  req.end();
+}
+
+function startOmniKeepAlive() {
+  if (omniKeepAliveInterval) return;
+
+  isOmniMode = true;
+
+  // Set presence immediately, then every OMNI_INTERVAL
+  omniSetPresence();
+  omniKeepAliveInterval = setInterval(omniSetPresence, OMNI_INTERVAL);
+
+  // Also start caffeinate if not already running
+  if (!isAwake) {
+    startCaffeinate();
+  }
+
+  notifyRenderer();
+  updateTrayMenu();
+}
+
+function stopOmniKeepAlive() {
+  if (omniKeepAliveInterval) {
+    clearInterval(omniKeepAliveInterval);
+    omniKeepAliveInterval = null;
+  }
+  isOmniMode = false;
+  notifyRenderer();
+  updateTrayMenu();
+}
+
 // ===== NOTIFY RENDERER =====
 
 function notifyRenderer() {
   if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.webContents.send('status-changed', { isAwake, isSlackMode });
+    mainWindow.webContents.send('status-changed', { isAwake, isSlackMode, isOmniMode });
   }
 }
 
@@ -387,23 +528,25 @@ ipcMain.handle('toggle-awake', () => {
   if (isAwake) {
     stopCaffeinate();
     if (isSlackMode) stopMouseJiggle();
+    if (isOmniMode) stopOmniKeepAlive();
   } else {
     startCaffeinate();
   }
-  return { isAwake, isSlackMode };
+  return { isAwake, isSlackMode, isOmniMode };
 });
 
-ipcMain.handle('get-status', () => ({ isAwake, isSlackMode }));
+ipcMain.handle('get-status', () => ({ isAwake, isSlackMode, isOmniMode }));
 
 ipcMain.handle('turn-on', () => {
   startCaffeinate();
-  return { isAwake, isSlackMode };
+  return { isAwake, isSlackMode, isOmniMode };
 });
 
 ipcMain.handle('turn-off', () => {
   stopCaffeinate();
   if (isSlackMode) stopMouseJiggle();
-  return { isAwake, isSlackMode };
+  if (isOmniMode) stopOmniKeepAlive();
+  return { isAwake, isSlackMode, isOmniMode };
 });
 
 ipcMain.handle('toggle-slack-mode', () => {
@@ -412,7 +555,16 @@ ipcMain.handle('toggle-slack-mode', () => {
   } else {
     startMouseJiggle();
   }
-  return { isAwake, isSlackMode };
+  return { isAwake, isSlackMode, isOmniMode };
+});
+
+ipcMain.handle('toggle-omni-mode', () => {
+  if (isOmniMode) {
+    stopOmniKeepAlive();
+  } else {
+    startOmniKeepAlive();
+  }
+  return { isAwake, isSlackMode, isOmniMode };
 });
 
 ipcMain.handle('check-for-updates', async () => {
@@ -531,6 +683,7 @@ ipcMain.handle('restart-app', () => {
   app.isQuitting = true;
   stopCaffeinate();
   stopMouseJiggle();
+  stopOmniKeepAlive();
   app.relaunch();
   app.quit();
 });
@@ -562,4 +715,5 @@ app.on('before-quit', () => {
   app.isQuitting = true;
   stopCaffeinate();
   stopMouseJiggle();
+  stopOmniKeepAlive();
 });

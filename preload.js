@@ -6,6 +6,7 @@ contextBridge.exposeInMainWorld('brew', {
   turnOn: () => ipcRenderer.invoke('turn-on'),
   turnOff: () => ipcRenderer.invoke('turn-off'),
   toggleSlackMode: () => ipcRenderer.invoke('toggle-slack-mode'),
+  toggleOmniMode: () => ipcRenderer.invoke('toggle-omni-mode'),
   checkForUpdates: () => ipcRenderer.invoke('check-for-updates'),
   downloadAndInstall: (url) => ipcRenderer.invoke('download-and-install-update', url),
   restartApp: () => ipcRenderer.invoke('restart-app'),

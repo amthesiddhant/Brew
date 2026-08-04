@@ -92,6 +92,26 @@
       </div>
     </div>
 
+    <!-- Omni Mode Toggle -->
+    <div class="omni-toggle" id="omniToggle">
+      <div class="omni-toggle-row" onclick="toggleOmniMode()">
+        <div class="omni-icon-wrap">
+          <svg viewBox="0 0 24 24" class="omni-svg" id="omniIcon">
+            <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="1.5"/>
+            <path d="M12 7v5l3 3" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+            <circle cx="12" cy="12" r="2" fill="currentColor"/>
+          </svg>
+        </div>
+        <div class="omni-info">
+          <span class="omni-label">Keep Omni Online</span>
+          <span class="omni-desc" id="omniDesc">Refreshes presence every 3 min</span>
+        </div>
+        <div class="toggle-switch" id="omniToggleSwitch">
+          <div class="toggle-knob" id="omniToggleKnob"></div>
+        </div>
+      </div>
+    </div>
+
     <!-- Timer -->
     <div class="timer" id="timerSection">
       <p class="timer-label">Brewing for</p>
