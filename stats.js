@@ -280,6 +280,9 @@ class Stats {
 
     return {
       generatedAt: now,
+      // True while a brew session is in progress right now — drives the
+      // dashboard's live indicator and the per-second refresh feel.
+      brewing: !!this.open,
       today: this._summarize(this._sessionsSince(now, todayStart)),
       week: this._summarize(this._sessionsSince(now, weekStart)),
       month: this._summarize(this._sessionsSince(now, monthStart)),
@@ -293,13 +296,6 @@ class Stats {
         monthly,
       },
     };
-  }
-
-  // Wipe all recorded history (dashboard "Reset stats").
-  reset() {
-    this.data = { version: 1, sessions: [] };
-    this.open = null;
-    this._save();
   }
 }
 

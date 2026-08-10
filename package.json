@@ -1,6 +1,6 @@
 {
   "name": "brew",
-  "version": "1.9.0",
+  "version": "1.9.1",
   "description": "Brew - Keep your MacBook awake with a fresh cup of coffee",
   "main": "main.js",
   "scripts": {

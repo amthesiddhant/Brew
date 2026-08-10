@@ -35,7 +35,6 @@ contextBridge.exposeInMainWorld('brew', {
   // Usage insights dashboard.
   openDashboard: () => ipcRenderer.invoke('open-dashboard'),
   statsGet: () => ipcRenderer.invoke('stats:get'),
-  statsReset: () => ipcRenderer.invoke('stats:reset'),
   // The main process pings this whenever the numbers change (start/stop) or the
   // dashboard is re-shown, so the view can re-pull and re-render.
   onStatsRefresh: (handler) => {

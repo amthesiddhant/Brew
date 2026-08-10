@@ -1398,19 +1398,43 @@ body.brewing::before {
   letter-spacing: -0.3px;
 }
 .dash-subtitle { font-size: 13px; color: var(--text-secondary); margin-top: 2px; }
-.dash-reset {
-  padding: 8px 16px;
+
+/* Live indicator — pulses while a brew session is in progress. */
+.dash-live {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 14px;
+  border-radius: 999px;
   background: rgba(148, 163, 184, 0.08);
-  border: 1px solid rgba(148, 163, 184, 0.25);
-  border-radius: 10px;
-  color: var(--text-secondary);
+  border: 1px solid rgba(148, 163, 184, 0.2);
   font-size: 12px;
   font-weight: 600;
-  cursor: pointer;
-  transition: all 0.2s ease;
-  -webkit-app-region: no-drag;
+  color: var(--text-muted);
+  transition: all 0.3s ease;
 }
-.dash-reset:hover { background: rgba(239, 68, 68, 0.15); border-color: rgba(239, 68, 68, 0.4); color: #fca5a5; }
+.dash-live.active {
+  background: rgba(212, 145, 92, 0.14);
+  border-color: rgba(212, 145, 92, 0.4);
+  color: #f5c478;
+}
+.dash-live-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-muted);
+  transition: background 0.3s ease;
+}
+.dash-live.active .dash-live-dot {
+  background: #f5c478;
+  box-shadow: 0 0 0 0 rgba(245, 196, 120, 0.6);
+  animation: dash-live-pulse 1.6s ease-out infinite;
+}
+@keyframes dash-live-pulse {
+  0% { box-shadow: 0 0 0 0 rgba(245, 196, 120, 0.55); }
+  70% { box-shadow: 0 0 0 8px rgba(245, 196, 120, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(245, 196, 120, 0); }
+}
 
 /* Headline stat cards */
 .stat-grid {

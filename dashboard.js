@@ -89,6 +89,43 @@ function bucketsForPeriod() {
   }
 }
 
+// Track the chart shape we last built so we can update bars *in place* (smooth
+// height transitions) instead of tearing down and rebuilding the DOM — that's
+// what makes the live update look fluid rather than flickering.
+let chartSignature = null; // `${period}:${bucketCount}`
+
+function buildChartSkeleton(area, buckets) {
+  area.innerHTML = '';
+  for (const b of buckets) {
+    const col = document.createElement('div');
+    col.className = 'bar-col';
+
+    const barWrap = document.createElement('div');
+    barWrap.className = 'bar-wrap';
+
+    const bar = document.createElement('div');
+    bar.className = 'bar';
+
+    const slack = document.createElement('div');
+    slack.className = 'bar-slack';
+    bar.appendChild(slack);
+
+    const val = document.createElement('span');
+    val.className = 'bar-value';
+    bar.appendChild(val);
+
+    barWrap.appendChild(bar);
+
+    const label = document.createElement('span');
+    label.className = 'bar-label';
+    label.textContent = b.label;
+
+    col.appendChild(barWrap);
+    col.appendChild(label);
+    area.appendChild(col);
+  }
+}
+
 function renderChart() {
   const area = document.getElementById('chartArea');
   const empty = document.getElementById('chartEmpty');
@@ -103,57 +140,54 @@ function renderChart() {
   if (maxMs <= 0) {
     area.style.display = 'none';
     empty.style.display = 'flex';
+    chartSignature = null;
     return;
   }
   area.style.display = 'flex';
   empty.style.display = 'none';
 
-  // Build bars. Height is a percentage of the tallest bar (min 2% so a tiny
-  // non-zero value is still visible). Slack time is shown as a darker overlay
-  // segment at the base of each bar.
-  area.innerHTML = '';
-  for (const b of buckets) {
-    const pct = maxMs > 0 ? Math.max(b.totalMs > 0 ? 3 : 0, (b.totalMs / maxMs) * 100) : 0;
+  // Rebuild the skeleton only when the period or bucket count changes; otherwise
+  // reuse the existing bars so CSS height transitions animate the update.
+  const sig = `${period}:${buckets.length}`;
+  if (sig !== chartSignature || area.children.length !== buckets.length) {
+    buildChartSkeleton(area, buckets);
+    chartSignature = sig;
+  }
+
+  const cols = area.children;
+  for (let i = 0; i < buckets.length; i++) {
+    const b = buckets[i];
+    const col = cols[i];
+    if (!col) continue;
+    const bar = col.querySelector('.bar');
+    const slack = col.querySelector('.bar-slack');
+    const val = col.querySelector('.bar-value');
+    const label = col.querySelector('.bar-label');
+
+    const pct = Math.max(b.totalMs > 0 ? 3 : 0, (b.totalMs / maxMs) * 100);
     const slackPct = b.totalMs > 0 ? Math.min(100, (b.slackMs / b.totalMs) * 100) : 0;
 
-    const col = document.createElement('div');
-    col.className = 'bar-col';
-
-    const barWrap = document.createElement('div');
-    barWrap.className = 'bar-wrap';
-
-    const bar = document.createElement('div');
-    bar.className = 'bar' + (b.totalMs > 0 ? '' : ' bar-empty');
+    bar.classList.toggle('bar-empty', b.totalMs <= 0);
     bar.style.height = `${pct}%`;
-
-    // Slack overlay at the base of the bar.
-    if (slackPct > 0) {
-      const slack = document.createElement('div');
-      slack.className = 'bar-slack';
-      slack.style.height = `${slackPct}%`;
-      bar.appendChild(slack);
-    }
-
-    // Value label floating above the bar.
-    const val = document.createElement('span');
-    val.className = 'bar-value';
+    slack.style.height = `${slackPct}%`;
+    slack.style.display = slackPct > 0 ? '' : 'none';
     val.textContent = b.totalMs > 0 ? fmtShort(b.totalMs) : '';
-    bar.appendChild(val);
+    if (label) label.textContent = b.label;
 
-    // Rich tooltip.
     const slackTxt = b.slackMs > 0 ? ` · ${fmtShort(b.slackMs)} on Slack` : '';
-    barWrap.title = `${b.dateLabel}: ${fmtDuration(b.totalMs)}${slackTxt} · ${b.count} session${b.count === 1 ? '' : 's'}`;
-
-    barWrap.appendChild(bar);
-
-    const label = document.createElement('span');
-    label.className = 'bar-label';
-    label.textContent = b.label;
-
-    col.appendChild(barWrap);
-    col.appendChild(label);
-    area.appendChild(col);
+    col.querySelector('.bar-wrap').title =
+      `${b.dateLabel}: ${fmtDuration(b.totalMs)}${slackTxt} · ${b.count} session${b.count === 1 ? '' : 's'}`;
   }
+}
+
+// Drive the "Live" indicator: active (pulsing) whenever a session is in
+// progress right now, dim otherwise.
+function renderLive() {
+  const live = document.getElementById('dashLive');
+  if (!live) return;
+  const active = !!(insights && insights.brewing);
+  live.classList.toggle('active', active);
+  setText('dashLiveText', active ? 'Live' : 'Idle');
 }
 
 function render() {
@@ -161,6 +195,7 @@ function render() {
   renderCards();
   renderMini();
   renderChart();
+  renderLive();
 }
 
 // ---- Data + events ---------------------------------------------------------
@@ -186,21 +221,15 @@ document.getElementById('periodTabs').addEventListener('click', (e) => {
   renderChart();
 });
 
-// Reset with a confirm.
-document.getElementById('dashReset').addEventListener('click', async () => {
-  const ok = window.confirm('Clear all recorded Brew history? This cannot be undone.');
-  if (!ok) return;
-  await window.brew.statsReset();
-  await refresh();
-});
-
 // Live refresh when the main process signals a change (start/stop) or re-show.
 if (window.brew.onStatsRefresh) {
   window.brew.onStatsRefresh(() => refresh());
 }
 
-// While the window is open, re-pull every 30s so an in-progress session's
-// "today"/live bar keeps ticking up.
-setInterval(refresh, 30000);
+// Live update: while a session is in progress the numbers change every second,
+// so re-pull once per second. When idle we still refresh (cheaply) so the view
+// stays current if data changes from elsewhere; the in-place bar updates make
+// this smooth with no flicker.
+setInterval(refresh, 1000);
 
 refresh();

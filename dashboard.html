@@ -19,7 +19,11 @@
           <p class="dash-subtitle" id="dashSubtitle">How much you've kept your Mac awake</p>
         </div>
       </div>
-      <button class="dash-reset" id="dashReset" title="Clear all recorded history">Reset</button>
+      <!-- Live indicator: pulses while a brew session is in progress. -->
+      <div class="dash-live" id="dashLive" title="Updating live">
+        <span class="dash-live-dot"></span>
+        <span class="dash-live-text" id="dashLiveText">Live</span>
+      </div>
     </header>
 
     <!-- Headline stat cards -->

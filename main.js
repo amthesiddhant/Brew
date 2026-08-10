@@ -518,12 +518,6 @@ ipcMain.handle('stats:get', () => {
   return stats.getInsights(nowMs());
 });
 
-// Wipe all recorded usage history.
-ipcMain.handle('stats:reset', () => {
-  if (stats) stats.reset();
-  return { ok: true };
-});
-
 // ===== APP LIFECYCLE =====
 
 app.whenReady().then(() => {
