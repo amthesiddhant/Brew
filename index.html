@@ -92,26 +92,6 @@
       </div>
     </div>
 
-    <!-- Omni Mode Toggle -->
-    <div class="omni-toggle" id="omniToggle">
-      <div class="omni-toggle-row" onclick="toggleOmniMode()">
-        <div class="omni-icon-wrap">
-          <svg viewBox="0 0 24 24" class="omni-svg" id="omniIcon">
-            <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="1.5"/>
-            <path d="M12 7v5l3 3" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
-            <circle cx="12" cy="12" r="2" fill="currentColor"/>
-          </svg>
-        </div>
-        <div class="omni-info">
-          <span class="omni-label">Keep Omni Online</span>
-          <span class="omni-desc" id="omniDesc">Refreshes presence every 3 min</span>
-        </div>
-        <div class="toggle-switch" id="omniToggleSwitch">
-          <div class="toggle-knob" id="omniToggleKnob"></div>
-        </div>
-      </div>
-    </div>
-
     <!-- Timer -->
     <div class="timer" id="timerSection">
       <p class="timer-label">Brewing for</p>
@@ -152,6 +132,30 @@
           </svg>
         </div>
       </div>
+
+      <!-- SOMA connection (needed once to authorize update downloads) -->
+      <div class="soma-row" id="somaRow">
+        <span class="soma-state" id="somaStateLine">Connect once so Brew can fetch updates from SOMA.</span>
+        <button class="soma-btn" id="somaConnectBtn" onclick="somaConnect()">Connect to SOMA</button>
+        <button class="soma-btn ghost" id="somaDisconnectBtn" style="display: none;" onclick="somaDisconnect()">Disconnect</button>
+      </div>
+
+      <!-- Token paste box (revealed by "Connect to SOMA") -->
+      <div class="soma-connect-box" id="somaConnectBox" style="display: none;">
+        <p class="soma-connect-help">
+          A browser tab opened on SOMA to generate a token (scope
+          <strong>repo</strong>). Click <strong>Generate token</strong>, copy it, and paste it below.
+        </p>
+        <div class="soma-connect-input">
+          <input id="somaTokenInput" type="password" placeholder="Paste SOMA token here"
+                 autocomplete="off" spellcheck="false" />
+          <button class="btn-update" id="somaSaveBtn" onclick="saveSomaToken()">
+            <span>Save &amp; Verify</span>
+          </button>
+        </div>
+        <div class="soma-connect-msg" id="somaConnectMsg" style="display: none;"></div>
+      </div>
+
       <!-- Update details panel (shown when update available) -->
       <div class="update-details" id="updateDetails" style="display: none;">
         <div class="update-details-content">
@@ -165,7 +169,7 @@
               <polyline points="7 10 12 15 17 10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
               <line x1="12" y1="15" x2="12" y2="3" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
             </svg>
-            <span>Download &amp; Install</span>
+            <span>Update &amp; Restart</span>
           </button>
 
           <!-- Progress bar (shown during download) -->
@@ -176,16 +180,23 @@
             </div>
             <div class="update-progress-percent" id="updateProgressPercent">0%</div>
           </div>
-
-          <!-- Restart button (shown after install) -->
-          <button class="btn-restart" id="btnRestart" style="display: none;" onclick="restartApp()">
-            <svg viewBox="0 0 24 24" class="btn-update-icon">
-              <path d="M23 4v6h-6" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-              <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-            </svg>
-            <span>Restart Brew</span>
-          </button>
         </div>
+      </div>
+    </div>
+
+    <!-- Update-available modal (surfaced by background auto-check) -->
+    <div class="update-modal hidden" id="updateModal" role="dialog" aria-modal="true" aria-labelledby="updateModalTitle">
+      <div class="update-modal-backdrop" data-update-close></div>
+      <div class="update-modal-dialog" role="document">
+        <div class="update-modal-badge" aria-hidden="true">☕︎</div>
+        <h2 class="update-modal-title" id="updateModalTitle">Update available</h2>
+        <p class="update-modal-version" id="updateModalVersion">A new version of Brew is ready.</p>
+        <div class="update-modal-notes hidden" id="updateModalNotes"></div>
+        <div class="update-modal-actions">
+          <button class="soma-btn ghost" id="updateModalLater" data-update-close>Later</button>
+          <button class="btn-update" id="updateModalNow"><span>Update Now</span></button>
+        </div>
+        <p class="update-modal-foot">You can always update later from this window.</p>
       </div>
     </div>
 

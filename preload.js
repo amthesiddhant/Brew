@@ -6,10 +6,6 @@ contextBridge.exposeInMainWorld('brew', {
   turnOn: () => ipcRenderer.invoke('turn-on'),
   turnOff: () => ipcRenderer.invoke('turn-off'),
   toggleSlackMode: () => ipcRenderer.invoke('toggle-slack-mode'),
-  toggleOmniMode: () => ipcRenderer.invoke('toggle-omni-mode'),
-  checkForUpdates: () => ipcRenderer.invoke('check-for-updates'),
-  downloadAndInstall: (url) => ipcRenderer.invoke('download-and-install-update', url),
-  restartApp: () => ipcRenderer.invoke('restart-app'),
   getAppVersion: () => ipcRenderer.invoke('get-app-version'),
   onStatusChanged: (callback) => {
     ipcRenderer.on('status-changed', (event, status) => callback(status));
@@ -17,7 +13,22 @@ contextBridge.exposeInMainWorld('brew', {
   onTriggerUpdateCheck: (callback) => {
     ipcRenderer.on('trigger-update-check', () => callback());
   },
-  onUpdateProgress: (callback) => {
-    ipcRenderer.on('update-progress', (event, progress) => callback(progress));
-  }
+  // App updates (via SOMA releases)
+  updateStatus: () => ipcRenderer.invoke('update:status'),
+  updateOpenTokenPage: () => ipcRenderer.invoke('update:openTokenPage'),
+  updateConnect: (token) => ipcRenderer.invoke('update:connect', { token }),
+  updateDisconnect: () => ipcRenderer.invoke('update:disconnect'),
+  // Leave the SOMA lock screen and load the main UI (only works once a
+  // verified token is saved — the main process re-checks before unlocking).
+  unlock: () => ipcRenderer.invoke('unlock'),
+  updateCheck: () => ipcRenderer.invoke('update:check'),
+  updateInstall: () => ipcRenderer.invoke('update:install'),
+  updateProgress: () => ipcRenderer.invoke('update:progress'),
+  // Push notification: a background check found a newer release. Returns an
+  // unsubscribe fn. Payload: { version, name, notes, hasInstaller, ... }.
+  onUpdateAvailable: (handler) => {
+    const listener = (_evt, info) => handler(info);
+    ipcRenderer.on('update:available', listener);
+    return () => ipcRenderer.removeListener('update:available', listener);
+  },
 });

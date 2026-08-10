@@ -1,6 +1,5 @@
 let isAwake = false;
 let isSlackMode = false;
-let isOmniMode = false;
 let timerInterval = null;
 let startTime = null;
 
@@ -75,17 +74,10 @@ async function toggleSlackMode() {
   updateUI(status);
 }
 
-// Toggle Omni Mode
-async function toggleOmniMode() {
-  const status = await window.brew.toggleOmniMode();
-  updateUI(status);
-}
-
 // Update UI based on status
 function updateUI(status) {
   isAwake = status.isAwake;
   isSlackMode = status.isSlackMode;
-  isOmniMode = status.isOmniMode;
 
   // Brew state
   if (isAwake) {
@@ -94,11 +86,8 @@ function updateUI(status) {
     btnOff.classList.remove('active');
     timerSection.classList.add('active');
 
-    const extras = [];
-    if (isSlackMode) extras.push('Slack');
-    if (isOmniMode) extras.push('Omni');
-    if (extras.length > 0) {
-      statusText.textContent = `Brewing + ${extras.join(' + ')} Online`;
+    if (isSlackMode) {
+      statusText.textContent = 'Brewing + Slack Online';
     } else {
       statusText.textContent = 'Brewing... Mac staying awake';
     }
@@ -122,20 +111,6 @@ function updateUI(status) {
     toggleSwitch.classList.remove('active');
     slackToggleRow.classList.remove('active');
     slackDesc.textContent = 'Simulates activity every 4 min';
-  }
-
-  // Omni mode state
-  const omniToggleSwitch = document.getElementById('omniToggleSwitch');
-  const omniToggleRow = document.querySelector('.omni-toggle-row');
-  const omniDesc = document.getElementById('omniDesc');
-  if (isOmniMode) {
-    omniToggleSwitch.classList.add('active');
-    omniToggleRow.classList.add('active');
-    omniDesc.textContent = 'Active - refreshing every 3 min';
-  } else {
-    omniToggleSwitch.classList.remove('active');
-    omniToggleRow.classList.remove('active');
-    omniDesc.textContent = 'Refreshes presence every 3 min';
   }
 }
 
@@ -174,8 +149,16 @@ function updateTimer() {
 }
 
 // ===== UPDATE FEATURE =====
+// Brew updates itself from its latest published Release on SOMA. The flow:
+//   1. Connect once — paste a repo-scoped SOMA token (stored encrypted in the
+//      main process; the renderer never holds it).
+//   2. Check for Updates — asks the main process to compare our version to the
+//      latest release tag.
+//   3. Update & Restart — downloads the packaged .zip, swaps the app bundle in
+//      place, and relaunches (handled entirely in the main process).
 
-let updateDownloadUrl = null;
+let updateLatest = null; // the available-update payload from the last check
+let updatePollId = null;  // interval id while a download is in progress
 
 const updateLabel = document.getElementById('updateLabel');
 const updateDesc = document.getElementById('updateDesc');
@@ -184,127 +167,387 @@ const updateBadge = document.getElementById('updateBadge');
 const updateDetails = document.getElementById('updateDetails');
 const latestVersionEl = document.getElementById('latestVersion');
 const updateNotes = document.getElementById('updateNotes');
-const updateIcon = document.getElementById('updateIcon');
 const updateSection = document.getElementById('updateSection');
-
 const updateIconWrap = document.getElementById('updateIconWrap');
 
+// SOMA connection elements.
+const somaStateLine = document.getElementById('somaStateLine');
+const somaConnectBtn = document.getElementById('somaConnectBtn');
+const somaDisconnectBtn = document.getElementById('somaDisconnectBtn');
+const somaConnectBox = document.getElementById('somaConnectBox');
+const somaTokenInput = document.getElementById('somaTokenInput');
+const somaConnectMsg = document.getElementById('somaConnectMsg');
+
+// Strip the noisy Error: prefix Electron adds when an IPC handler throws.
+function cleanErrorMessage(msg) {
+  return String(msg || '').replace(/^Error:\s*/i, '').replace(/^.*Error invoking remote method '[^']+':\s*/i, '');
+}
+
+function setSomaMsg(text, kind) {
+  if (!somaConnectMsg) return;
+  if (!text) {
+    somaConnectMsg.style.display = 'none';
+    somaConnectMsg.textContent = '';
+    somaConnectMsg.classList.remove('ok', 'err');
+    return;
+  }
+  somaConnectMsg.textContent = text;
+  somaConnectMsg.style.display = 'block';
+  somaConnectMsg.classList.remove('ok', 'err');
+  if (kind) somaConnectMsg.classList.add(kind);
+}
+
+// Paint the whole update section from the main process's current status.
+async function refreshUpdatePanel() {
+  let status;
+  try {
+    status = await window.brew.updateStatus();
+  } catch {
+    status = { connected: false, currentVersion: null };
+  }
+  const connected = !!status.connected;
+
+  // SOMA connection row.
+  somaConnectBtn.style.display = connected ? 'none' : '';
+  somaDisconnectBtn.style.display = connected ? '' : 'none';
+  somaStateLine.textContent = connected
+    ? 'Connected to SOMA. Brew can fetch updates.'
+    : 'Connect once so Brew can fetch updates from SOMA.';
+  if (connected) {
+    somaConnectBox.style.display = 'none';
+    setSomaMsg('');
+  }
+
+  const cur = status.currentVersion || currentVersionEl.textContent;
+  if (cur) currentVersionEl.textContent = cur;
+
+  if (!connected) {
+    updateLabel.textContent = 'Check for Updates';
+    updateDesc.innerHTML = `v<span id="currentVersion">${cur || ''}</span>`;
+    updateBadge.style.display = 'none';
+    updateDetails.style.display = 'none';
+    updateSection.classList.remove('has-update');
+    return;
+  }
+
+  if (status.updateAvailable && status.latestRelease) {
+    showAvailableUpdate({
+      version: status.latestRelease.version,
+      name: status.latestRelease.name,
+      notes: status.latestRelease.body,
+      hasInstaller: !!status.latestRelease.assetUrl,
+    });
+  }
+}
+
+// Render the "an update is available" state in the inline panel.
+function showAvailableUpdate(info) {
+  updateLatest = info;
+  updateLabel.textContent = 'Update Available!';
+  updateDesc.textContent = `v${currentVersionEl.textContent} → v${info.version}`;
+  updateBadge.style.display = 'flex';
+  latestVersionEl.textContent = info.version;
+  updateNotes.textContent = info.notes
+    ? info.notes.trim().substring(0, 180) + (info.notes.trim().length > 180 ? '…' : '')
+    : 'A new version is available.';
+  updateDetails.style.display = 'block';
+  updateSection.classList.add('has-update');
+
+  const btnUpdate = document.getElementById('btnUpdate');
+  btnUpdate.disabled = !info.hasInstaller;
+}
+
+// "Check for Updates" — probe SOMA for a newer release.
 async function checkForUpdates() {
-  // Show loading state with coffee pour animation
-  updateLabel.textContent = 'Brewing update check...';
+  // Not connected yet → guide the user to connect first.
+  let status;
+  try { status = await window.brew.updateStatus(); } catch { status = {}; }
+  if (!status.connected) {
+    somaConnect();
+    return;
+  }
+
+  updateLabel.textContent = 'Brewing update check…';
   updateIconWrap.classList.add('checking');
   updateBadge.style.display = 'none';
   updateDetails.style.display = 'none';
 
-  const result = await window.brew.checkForUpdates();
-
-  updateIconWrap.classList.remove('checking');
-
-  if (!result.success) {
+  try {
+    const res = await window.brew.updateCheck();
+    if (res.needsAuth) {
+      updateLabel.textContent = 'Reconnect to SOMA';
+      updateDesc.textContent = 'Token invalid or expired';
+      await refreshUpdatePanel();
+    } else if (res.available) {
+      showAvailableUpdate({
+        version: res.version,
+        name: res.name,
+        notes: res.notes,
+        hasInstaller: res.hasInstaller,
+      });
+    } else if (res.error) {
+      updateLabel.textContent = 'Update check failed';
+      updateDesc.textContent = cleanErrorMessage(res.error);
+      setTimeout(resetUpdateRow, 3000);
+    } else {
+      const cur = res.currentVersion || currentVersionEl.textContent;
+      updateLabel.textContent = "You're up to date!";
+      updateDesc.textContent = `v${cur} is the latest`;
+      updateBadge.style.display = 'none';
+      updateDetails.style.display = 'none';
+      updateSection.classList.remove('has-update');
+      setTimeout(resetUpdateRow, 3000);
+    }
+  } catch (e) {
     updateLabel.textContent = 'Update check failed';
-    updateDesc.textContent = result.error || 'Network error';
-    setTimeout(() => {
-      updateLabel.textContent = 'Check for Updates';
-      updateDesc.innerHTML = `v<span id="currentVersion">${currentVersionEl.textContent}</span>`;
-    }, 3000);
-    return;
-  }
-
-  if (result.noReleases) {
-    updateLabel.textContent = 'You\'re up to date!';
-    updateDesc.textContent = `v${result.currentVersion} — no newer releases found`;
-    setTimeout(() => {
-      updateLabel.textContent = 'Check for Updates';
-      updateDesc.innerHTML = `v<span id="currentVersion">${result.currentVersion}</span>`;
-    }, 3000);
-    return;
-  }
-
-  currentVersionEl.textContent = result.currentVersion;
-
-  if (result.hasUpdate) {
-    updateLabel.textContent = 'Update Available!';
-    updateDesc.textContent = `v${result.currentVersion} → v${result.latestVersion}`;
-    updateBadge.style.display = 'flex';
-    latestVersionEl.textContent = result.latestVersion;
-    updateNotes.textContent = result.releaseNotes
-      ? result.releaseNotes.substring(0, 150) + (result.releaseNotes.length > 150 ? '...' : '')
-      : 'A new version is available.';
-    updateDetails.style.display = 'block';
-    updateDownloadUrl = result.downloadUrl || result.releaseUrl;
-    updateSection.classList.add('has-update');
-  } else {
-    updateLabel.textContent = 'You\'re up to date!';
-    updateDesc.textContent = `v${result.currentVersion} is the latest`;
-    updateBadge.style.display = 'none';
-    updateDetails.style.display = 'none';
-    updateSection.classList.remove('has-update');
-    setTimeout(() => {
-      updateLabel.textContent = 'Check for Updates';
-      updateDesc.innerHTML = `v<span id="currentVersion">${result.currentVersion}</span>`;
-    }, 3000);
+    updateDesc.textContent = cleanErrorMessage((e && e.message) || e);
+    setTimeout(resetUpdateRow, 3000);
+  } finally {
+    updateIconWrap.classList.remove('checking');
   }
 }
 
+function resetUpdateRow() {
+  if (updateLatest) return; // don't clobber an available-update state
+  updateLabel.textContent = 'Check for Updates';
+  updateDesc.innerHTML = `v<span id="currentVersion">${currentVersionEl.textContent}</span>`;
+}
+
+// "Update & Restart" — download, swap, relaunch (main process). We poll for
+// download progress; on success the app relaunches so this promise won't
+// resolve in-window.
 async function downloadUpdate() {
-  if (!updateDownloadUrl) return;
+  if (!updateLatest) return;
 
   const btnUpdate = document.getElementById('btnUpdate');
   const updateProgress = document.getElementById('updateProgress');
-  const btnRestart = document.getElementById('btnRestart');
-
-  // Hide button, show progress
-  btnUpdate.style.display = 'none';
-  updateProgress.style.display = 'block';
-
-  const result = await window.brew.downloadAndInstall(updateDownloadUrl);
-
-  if (!result.success) {
-    // Show error and restore button
-    updateProgress.style.display = 'none';
-    btnUpdate.style.display = 'flex';
-    updateLabel.textContent = 'Install failed';
-    updateDesc.textContent = result.error || 'Unknown error';
-  }
-}
-
-function restartApp() {
-  window.brew.restartApp();
-}
-
-// Listen for download/install progress updates
-window.brew.onUpdateProgress((progress) => {
   const progressLabel = document.getElementById('updateProgressLabel');
   const progressFill = document.getElementById('updateProgressFill');
   const progressPercent = document.getElementById('updateProgressPercent');
-  const updateProgress = document.getElementById('updateProgress');
-  const btnRestart = document.getElementById('btnRestart');
 
-  if (progress.stage === 'downloading') {
-    progressLabel.textContent = 'Downloading...';
-    progressFill.style.width = `${progress.percent}%`;
-    progressPercent.textContent = `${progress.percent}%`;
-  } else if (progress.stage === 'installing') {
-    progressLabel.textContent = 'Installing...';
-    progressFill.style.width = '100%';
-    progressPercent.textContent = '';
-    progressFill.classList.add('installing');
-  } else if (progress.stage === 'done') {
-    updateProgress.style.display = 'none';
-    btnRestart.style.display = 'flex';
-    updateLabel.textContent = 'Update Installed!';
-    updateDesc.textContent = 'Restart to use the new version';
-  } else if (progress.stage === 'error') {
-    progressLabel.textContent = `Error: ${progress.error}`;
+  btnUpdate.style.display = 'none';
+  updateProgress.style.display = 'block';
+  progressFill.style.width = '0%';
+  progressFill.classList.remove('installing', 'error');
+  progressLabel.textContent = 'Downloading…';
+  progressPercent.textContent = '0%';
+
+  updatePollId = setInterval(async () => {
+    try {
+      const p = await window.brew.updateProgress();
+      const pct = Math.max(0, Math.min(100, p.progress || 0));
+      progressFill.style.width = `${pct}%`;
+      if (pct >= 100) {
+        progressLabel.textContent = 'Installing…';
+        progressPercent.textContent = '';
+        progressFill.classList.add('installing');
+      } else {
+        progressLabel.textContent = 'Downloading…';
+        progressPercent.textContent = `${pct}%`;
+      }
+    } catch {
+      /* ignore transient poll errors */
+    }
+  }, 400);
+
+  const stopPoll = () => {
+    if (updatePollId) { clearInterval(updatePollId); updatePollId = null; }
+  };
+
+  try {
+    const res = await window.brew.updateInstall();
+    stopPoll();
+    if (res && res.deferred) {
+      // User chose "Later" at the confirm dialog.
+      updateProgress.style.display = 'none';
+      btnUpdate.style.display = 'flex';
+      updateLabel.textContent = 'Update Available!';
+      updateDesc.textContent = `v${updateLatest.version} is ready when you are`;
+    } else {
+      // Success path relaunches the app; keep the bar full meanwhile.
+      progressFill.style.width = '100%';
+      progressFill.classList.add('installing');
+      progressLabel.textContent = 'Restarting…';
+      progressPercent.textContent = '';
+    }
+  } catch (e) {
+    stopPoll();
     progressFill.style.width = '100%';
     progressFill.classList.add('error');
+    progressLabel.textContent = `Error: ${cleanErrorMessage((e && e.message) || e)}`;
+    progressPercent.textContent = '';
+    setTimeout(() => {
+      updateProgress.style.display = 'none';
+      btnUpdate.style.display = 'flex';
+    }, 4000);
   }
-});
+}
 
-// Set initial version display
+// ----- SOMA connect / disconnect -----
+
+// "Connect to SOMA" — open the token page and reveal the paste box.
+async function somaConnect() {
+  try {
+    await window.brew.updateOpenTokenPage();
+  } catch {
+    /* opening the browser is best-effort */
+  }
+  somaConnectBox.style.display = 'block';
+  setSomaMsg('');
+  somaTokenInput.value = '';
+  somaTokenInput.focus();
+}
+
+// "Save & Verify" — persist the pasted token and confirm it can read the repo.
+async function saveSomaToken() {
+  const token = somaTokenInput.value.trim();
+  if (!token) {
+    setSomaMsg('Paste a token first.', 'err');
+    return;
+  }
+  const btn = document.getElementById('somaSaveBtn');
+  btn.disabled = true;
+  setSomaMsg('Verifying…', null);
+  try {
+    const res = await window.brew.updateConnect(token);
+    if (res.ok) {
+      somaTokenInput.value = '';
+      setSomaMsg(`Connected${res.login ? ' as ' + res.login : ''}.`, 'ok');
+      await refreshUpdatePanel();
+      // Immediately check so the user sees any available update right away.
+      checkForUpdates();
+    } else {
+      setSomaMsg(cleanErrorMessage(res.message || 'Token could not be verified.'), 'err');
+    }
+  } catch (e) {
+    setSomaMsg(cleanErrorMessage((e && e.message) || e), 'err');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+// "Disconnect" — forget the SOMA token.
+async function somaDisconnect() {
+  try {
+    await window.brew.updateDisconnect();
+  } catch {
+    /* ignore */
+  }
+  updateLatest = null;
+  await refreshUpdatePanel();
+}
+
+if (somaTokenInput) {
+  somaTokenInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      saveSomaToken();
+    }
+  });
+}
+
+// -------------------- Background auto-update prompt -------------------------
+// The main process runs a background check (on launch + hourly). When it finds
+// a newer release it pushes `update:available`; we show a centered modal.
+//   • Update Now → start the download (reuses the manual install flow).
+//   • Later     → snooze THIS version for 24h. The next background check after
+//     the snooze expires re-surfaces it. A newer version ignores the snooze.
+const SNOOZE_MS = 24 * 60 * 60 * 1000;
+const SNOOZE_PREFIX = 'brew.updateSnooze.'; // + version → epoch ms when snoozed
+let updateModalVersionShown = null;
+
+const updateModal = document.getElementById('updateModal');
+const updateModalVersion = document.getElementById('updateModalVersion');
+const updateModalNotes = document.getElementById('updateModalNotes');
+const updateModalNow = document.getElementById('updateModalNow');
+
+function isUpdateSnoozed(version) {
+  const raw = localStorage.getItem(`${SNOOZE_PREFIX}${version}`);
+  if (!raw) return false;
+  const when = Number(raw);
+  if (!Number.isFinite(when)) return false;
+  return Date.now() - when < SNOOZE_MS;
+}
+
+function snoozeUpdate(version) {
+  localStorage.setItem(`${SNOOZE_PREFIX}${version}`, String(Date.now()));
+}
+
+function showUpdateModal(info) {
+  if (!updateModal || !info || !info.version) return;
+  updateModalVersionShown = info.version;
+  updateModalVersion.textContent = `Brew ${info.version} is ready to install.`;
+
+  if (info.notes && info.notes.trim()) {
+    updateModalNotes.textContent = info.notes.trim();
+    updateModalNotes.classList.remove('hidden');
+  } else {
+    updateModalNotes.textContent = '';
+    updateModalNotes.classList.add('hidden');
+  }
+
+  updateModal.classList.remove('hidden');
+  requestAnimationFrame(() => updateModal.classList.add('show'));
+}
+
+function hideUpdateModal() {
+  if (!updateModal) return;
+  updateModal.classList.remove('show');
+  setTimeout(() => updateModal.classList.add('hidden'), 180);
+}
+
+// Decide whether to actually surface a pushed update (respects the snooze).
+function handleUpdateAvailable(info) {
+  if (!info || !info.version) return;
+  // Keep the inline panel in sync too.
+  showAvailableUpdate({
+    version: info.version,
+    name: info.name,
+    notes: info.notes,
+    hasInstaller: info.hasInstaller,
+  });
+  if (isUpdateSnoozed(info.version)) return; // still within the 24h window
+  showUpdateModal(info);
+}
+
+if (updateModalNow) {
+  updateModalNow.addEventListener('click', async () => {
+    hideUpdateModal();
+    await refreshUpdatePanel();
+    const btnUpdate = document.getElementById('btnUpdate');
+    if (btnUpdate) btnUpdate.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    if (updateLatest && updateLatest.hasInstaller) {
+      downloadUpdate();
+    } else {
+      checkForUpdates();
+    }
+  });
+}
+
+// "Later" / backdrop / any [data-update-close] — snooze for 24h.
+if (updateModal) {
+  updateModal.addEventListener('click', (e) => {
+    if (e.target.closest('[data-update-close]')) {
+      if (updateModalVersionShown) snoozeUpdate(updateModalVersionShown);
+      hideUpdateModal();
+    }
+  });
+}
+
+// Subscribe to background "update available" pushes from the main process.
+if (window.brew.onUpdateAvailable) {
+  window.brew.onUpdateAvailable(handleUpdateAvailable);
+}
+
+// Set initial version display + paint the panel from current status.
 async function initVersion() {
-  const version = await window.brew.getAppVersion();
-  currentVersionEl.textContent = version;
+  try {
+    const version = await window.brew.getAppVersion();
+    currentVersionEl.textContent = version;
+  } catch {
+    /* ignore */
+  }
+  await refreshUpdatePanel();
 }
 
 // Listen for status changes from main process

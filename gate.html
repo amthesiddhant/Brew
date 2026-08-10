@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Brew</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="titlebar"></div>
+
+  <!-- Animated background particles -->
+  <div class="particles" id="particles"></div>
+
+  <div class="container gate-container">
+    <!-- App Icon -->
+    <div class="app-icon-wrapper">
+      <div class="icon-glow"></div>
+      <img src="assets/icon.png" alt="Brew" class="app-icon">
+    </div>
+
+    <!-- App Title -->
+    <div class="app-header">
+      <h1 class="app-title">Brew</h1>
+      <p class="app-subtitle">Connect to SOMA to continue</p>
+    </div>
+
+    <!-- Lock explainer -->
+    <div class="gate-card">
+      <div class="gate-lock" aria-hidden="true">
+        <svg viewBox="0 0 24 24" width="34" height="34">
+          <rect x="4" y="10" width="16" height="11" rx="2.5" fill="none" stroke="currentColor" stroke-width="1.5"/>
+          <path d="M8 10V7a4 4 0 0 1 8 0v3" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+          <circle cx="12" cy="15.5" r="1.6" fill="currentColor"/>
+        </svg>
+      </div>
+      <p class="gate-lead">Brew is locked</p>
+      <p class="gate-sub" id="gateState">
+        You need to connect Brew to SOMA before you can use the app. This
+        authorizes secure in-app updates from Brew's private repo.
+      </p>
+
+      <button class="btn-update gate-connect" id="gateConnectBtn" onclick="gateConnect()">
+        <span>Connect to SOMA</span>
+      </button>
+
+      <!-- Token paste box (revealed by "Connect to SOMA") -->
+      <div class="soma-connect-box" id="gateConnectBox" style="display: none;">
+        <p class="soma-connect-help">
+          A browser tab opened on SOMA to generate a token (scope
+          <strong>repo</strong>). Click <strong>Generate token</strong>, copy it, and paste it below.
+        </p>
+        <div class="soma-connect-input">
+          <input id="gateTokenInput" type="password" placeholder="Paste SOMA token here"
+                 autocomplete="off" spellcheck="false" />
+          <button class="btn-update" id="gateSaveBtn" onclick="gateSaveToken()">
+            <span>Save &amp; Verify</span>
+          </button>
+        </div>
+        <div class="soma-connect-msg" id="gateConnectMsg" style="display: none;"></div>
+      </div>
+    </div>
+
+    <div class="footer">
+      <p>Powered by macOS caffeinate ☕</p>
+    </div>
+  </div>
+
+  <script src="gate.js"></script>
+</body>
+</html>

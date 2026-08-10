@@ -685,97 +685,6 @@ body.brewing::before {
   50% { opacity: 0.7; box-shadow: 0 0 0 6px rgba(74, 163, 99, 0); }
 }
 
-/* Omni Toggle (mirrors slack toggle with blue accent) */
-.omni-toggle {
-  width: 100%;
-  -webkit-app-region: no-drag;
-}
-
-.omni-toggle-row {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 12px 16px;
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 12px;
-  cursor: pointer;
-  transition: all 0.3s ease;
-  position: relative;
-}
-
-.omni-toggle-row:hover {
-  background: rgba(255, 255, 255, 0.08);
-  border-color: rgba(255, 255, 255, 0.15);
-}
-
-.omni-toggle-row.active {
-  background: rgba(59, 130, 246, 0.1);
-  border-color: rgba(59, 130, 246, 0.3);
-}
-
-.omni-icon-wrap {
-  width: 32px;
-  height: 32px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--text-secondary);
-  transition: color 0.3s ease;
-}
-
-.omni-toggle-row.active .omni-icon-wrap {
-  color: #3b82f6;
-}
-
-.omni-svg {
-  width: 22px;
-  height: 22px;
-}
-
-.omni-info {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.omni-label {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text-primary);
-  transition: color 0.3s ease;
-}
-
-.omni-desc {
-  font-size: 10px;
-  color: var(--text-muted);
-  transition: color 0.3s ease;
-}
-
-.omni-toggle-row.active::before {
-  content: '';
-  position: absolute;
-  right: 60px;
-  top: 50%;
-  transform: translateY(-50%);
-  width: 6px;
-  height: 6px;
-  background: #3b82f6;
-  border-radius: 50%;
-  animation: omni-pulse 2s ease-in-out infinite;
-}
-
-.omni-toggle-row.active .toggle-switch.active {
-  background: #3b82f6;
-  box-shadow: 0 0 12px rgba(59, 130, 246, 0.4);
-}
-
-@keyframes omni-pulse {
-  0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.4); }
-  50% { opacity: 0.7; box-shadow: 0 0 0 6px rgba(59, 130, 246, 0); }
-}
-
 /* Smooth entrance animation */
 .container > * {
   animation: slide-up 0.6s ease-out backwards;
@@ -1173,3 +1082,260 @@ body.brewing::before {
 
 /* Add 8th child for animation stagger */
 .container > *:nth-child(8) { animation-delay: 0.8s; }
+
+/* ===== SOMA connection ===== */
+.soma-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  padding: 0 2px;
+}
+
+.soma-state {
+  flex: 1;
+  font-size: 10px;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
+.soma-btn {
+  padding: 6px 12px;
+  background: var(--btn-on-bg);
+  border: 1px solid var(--btn-on-border);
+  border-radius: 8px;
+  color: var(--btn-on-color);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.25s ease;
+  -webkit-app-region: no-drag;
+}
+
+.soma-btn:hover {
+  border-color: var(--accent);
+  box-shadow: 0 4px 14px var(--accent-glow);
+}
+
+.soma-btn:active {
+  transform: scale(0.97);
+}
+
+.soma-btn.ghost {
+  background: transparent;
+  border-color: transparent;
+  color: var(--text-muted);
+}
+
+.soma-btn.ghost:hover {
+  color: var(--text-secondary);
+  box-shadow: none;
+}
+
+/* Token paste box */
+.soma-connect-box {
+  margin-top: 10px;
+  padding: 12px 14px;
+  background: rgba(59, 130, 246, 0.05);
+  border: 1px solid rgba(59, 130, 246, 0.15);
+  border-radius: 10px;
+  animation: expand-down 0.3s ease-out;
+}
+
+.soma-connect-help {
+  font-size: 11px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+  margin-bottom: 10px;
+}
+
+.soma-connect-help strong { color: var(--text-primary); }
+
+.soma-connect-input {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.soma-connect-input input {
+  width: 100%;
+  padding: 9px 12px;
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  color: var(--text-primary);
+  font-size: 12px;
+  outline: none;
+  transition: border-color 0.25s ease;
+  -webkit-app-region: no-drag;
+}
+
+.soma-connect-input input:focus {
+  border-color: #3b82f6;
+}
+
+.soma-connect-input .btn-update {
+  width: 100%;
+}
+
+.soma-connect-msg {
+  margin-top: 8px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.soma-connect-msg.ok { color: #10b981; }
+.soma-connect-msg.err { color: #f87171; }
+
+/* ===== Update-available modal ===== */
+.update-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transition: opacity 0.18s ease;
+}
+
+.update-modal.hidden { display: none; }
+.update-modal.show { opacity: 1; }
+
+.update-modal-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(3px);
+}
+
+.update-modal-dialog {
+  position: relative;
+  width: 84%;
+  max-width: 320px;
+  padding: 24px 22px 18px;
+  background: linear-gradient(135deg, var(--bg-secondary), var(--bg-primary));
+  border: 1px solid var(--btn-on-border);
+  border-radius: 16px;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.5);
+  text-align: center;
+  transform: translateY(8px) scale(0.98);
+  transition: transform 0.18s ease;
+}
+
+.update-modal.show .update-modal-dialog {
+  transform: translateY(0) scale(1);
+}
+
+.update-modal-badge {
+  width: 48px;
+  height: 48px;
+  margin: 0 auto 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 24px;
+  border-radius: 14px;
+  background: linear-gradient(135deg, #3b82f6, #2563eb);
+  color: white;
+  box-shadow: 0 8px 22px rgba(59, 130, 246, 0.4);
+}
+
+.update-modal-title {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin-bottom: 6px;
+}
+
+.update-modal-version {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-bottom: 12px;
+}
+
+.update-modal-notes {
+  max-height: 120px;
+  overflow-y: auto;
+  padding: 10px 12px;
+  margin-bottom: 14px;
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 10px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+  text-align: left;
+  white-space: pre-wrap;
+}
+
+.update-modal-notes.hidden { display: none; }
+
+.update-modal-actions {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.update-modal-actions .btn-update { flex: 1; }
+.update-modal-actions .soma-btn { flex: 0 0 auto; }
+
+.update-modal-foot {
+  margin-top: 12px;
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+/* ===== SOMA lock screen (gate.html) ===== */
+.gate-container {
+  justify-content: center;
+  gap: 22px;
+}
+
+.gate-card {
+  width: 100%;
+  max-width: 340px;
+  margin: 0 auto;
+  padding: 24px 22px;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.25);
+  text-align: center;
+}
+
+.gate-lock {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 60px;
+  height: 60px;
+  margin-bottom: 12px;
+  border-radius: 50%;
+  color: #3b82f6;
+  background: rgba(59, 130, 246, 0.12);
+  border: 1px solid rgba(59, 130, 246, 0.35);
+}
+
+.gate-lead {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 0 0 6px;
+}
+
+.gate-sub {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+  margin: 0 0 18px;
+}
+
+.gate-connect {
+  width: 100%;
+}
+
+.gate-card .soma-connect-box {
+  margin-top: 16px;
+  text-align: left;
+}
