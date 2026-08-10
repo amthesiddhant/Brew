@@ -31,4 +31,16 @@ contextBridge.exposeInMainWorld('brew', {
     ipcRenderer.on('update:available', listener);
     return () => ipcRenderer.removeListener('update:available', listener);
   },
+
+  // Usage insights dashboard.
+  openDashboard: () => ipcRenderer.invoke('open-dashboard'),
+  statsGet: () => ipcRenderer.invoke('stats:get'),
+  statsReset: () => ipcRenderer.invoke('stats:reset'),
+  // The main process pings this whenever the numbers change (start/stop) or the
+  // dashboard is re-shown, so the view can re-pull and re-render.
+  onStatsRefresh: (handler) => {
+    const listener = () => handler();
+    ipcRenderer.on('stats-refresh', listener);
+    return () => ipcRenderer.removeListener('stats-refresh', listener);
+  },
 });

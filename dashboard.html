@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Brew Insights</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body class="dash-body">
+  <div class="titlebar"></div>
+
+  <div class="dash">
+    <!-- Header -->
+    <header class="dash-header">
+      <div class="dash-title-wrap">
+        <img src="assets/icon.png" alt="Brew" class="dash-logo">
+        <div>
+          <h1 class="dash-title">Your Brew Insights</h1>
+          <p class="dash-subtitle" id="dashSubtitle">How much you've kept your Mac awake</p>
+        </div>
+      </div>
+      <button class="dash-reset" id="dashReset" title="Clear all recorded history">Reset</button>
+    </header>
+
+    <!-- Headline stat cards -->
+    <section class="stat-grid" id="statGrid">
+      <div class="stat-card accent" data-metric="today">
+        <span class="stat-label">Today</span>
+        <span class="stat-value" id="cardToday">—</span>
+        <span class="stat-sub" id="cardTodaySub">&nbsp;</span>
+      </div>
+      <div class="stat-card" data-metric="week">
+        <span class="stat-label">This Week</span>
+        <span class="stat-value" id="cardWeek">—</span>
+        <span class="stat-sub" id="cardWeekSub">&nbsp;</span>
+      </div>
+      <div class="stat-card" data-metric="month">
+        <span class="stat-label">This Month</span>
+        <span class="stat-value" id="cardMonth">—</span>
+        <span class="stat-sub" id="cardMonthSub">&nbsp;</span>
+      </div>
+      <div class="stat-card" data-metric="all">
+        <span class="stat-label">All Time</span>
+        <span class="stat-value" id="cardAll">—</span>
+        <span class="stat-sub" id="cardAllSub">&nbsp;</span>
+      </div>
+    </section>
+
+    <!-- Chart -->
+    <section class="chart-panel">
+      <div class="chart-head">
+        <div>
+          <h2 class="chart-title" id="chartTitle">Last 7 Days</h2>
+          <p class="chart-hint" id="chartHint">Brew time per day</p>
+        </div>
+        <div class="period-tabs" id="periodTabs" role="tablist">
+          <button class="period-tab active" data-period="daily" role="tab">Daily</button>
+          <button class="period-tab" data-period="weekly" role="tab">Weekly</button>
+          <button class="period-tab" data-period="monthly" role="tab">Monthly</button>
+        </div>
+      </div>
+
+      <div class="chart-area" id="chartArea">
+        <!-- Bars injected by dashboard.js -->
+      </div>
+      <div class="chart-empty" id="chartEmpty" style="display:none;">
+        <div class="chart-empty-cup">☕</div>
+        <p>No brew time recorded yet.</p>
+        <p class="chart-empty-sub">Start brewing and your insights will fill in here.</p>
+      </div>
+    </section>
+
+    <!-- Secondary insight stats -->
+    <section class="mini-grid" id="miniGrid">
+      <div class="mini-card">
+        <span class="mini-icon">🔥</span>
+        <div class="mini-info">
+          <span class="mini-value" id="miniStreak">—</span>
+          <span class="mini-label">Day streak</span>
+        </div>
+      </div>
+      <div class="mini-card">
+        <span class="mini-icon">⏱️</span>
+        <div class="mini-info">
+          <span class="mini-value" id="miniLongest">—</span>
+          <span class="mini-label">Longest session</span>
+        </div>
+      </div>
+      <div class="mini-card">
+        <span class="mini-icon">📊</span>
+        <div class="mini-info">
+          <span class="mini-value" id="miniAvg">—</span>
+          <span class="mini-label">Avg session</span>
+        </div>
+      </div>
+      <div class="mini-card">
+        <span class="mini-icon">💬</span>
+        <div class="mini-info">
+          <span class="mini-value" id="miniSlack">—</span>
+          <span class="mini-label">Slack-online time</span>
+        </div>
+      </div>
+      <div class="mini-card">
+        <span class="mini-icon">☕</span>
+        <div class="mini-info">
+          <span class="mini-value" id="miniSessions">—</span>
+          <span class="mini-label">Total sessions</span>
+        </div>
+      </div>
+      <div class="mini-card">
+        <span class="mini-icon">📅</span>
+        <div class="mini-info">
+          <span class="mini-value" id="miniSince">—</span>
+          <span class="mini-label">Brewing since</span>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <script src="dashboard.js"></script>
+</body>
+</html>

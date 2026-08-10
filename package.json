@@ -1,6 +1,6 @@
 {
   "name": "brew",
-  "version": "1.8.0",
+  "version": "1.9.0",
   "description": "Brew - Keep your MacBook awake with a fresh cup of coffee",
   "main": "main.js",
   "scripts": {
@@ -24,6 +24,9 @@
       "index.html",
       "gate.html",
       "gate.js",
+      "dashboard.html",
+      "dashboard.js",
+      "stats.js",
       "styles.css",
       "soma-client.js",
       "updater.js",

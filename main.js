@@ -3,8 +3,21 @@ const { spawn } = require('child_process');
 const path = require('path');
 const SomaClient = require('./soma-client');
 const Updater = require('./updater');
+const Stats = require('./stats');
 
 let mainWindow;
+// Separate, larger window for the usage-insights dashboard. Created lazily the
+// first time the user opens it; hidden (not destroyed) on close so re-opening
+// is instant.
+let dashboardWindow = null;
+// Usage stats recorder. Instantiated in whenReady (needs app.getPath). Records
+// every brew session to userData and aggregates it for the dashboard.
+let stats = null;
+// Monotonic-ish clock used for stat timestamps. `Date.now` is the real wall
+// clock here (this is the main process, not a workflow sandbox).
+function nowMs() {
+  return Date.now();
+}
 // In-app updater: reads Brew's latest published Release on SOMA and swaps the
 // bundle in place. Wired up in app.whenReady (SomaClient's `net` needs ready).
 let updater = null;
@@ -59,6 +72,46 @@ function createWindow() {
       if (process.platform === 'darwin') {
         app.dock.hide();
       }
+    }
+  });
+}
+
+// Open (or focus) the insights dashboard in its own larger window. Gated the
+// same way the rest of the app is: no SOMA connection, no dashboard.
+function openDashboard() {
+  if (!isConnected()) return;
+
+  if (dashboardWindow && !dashboardWindow.isDestroyed()) {
+    if (process.platform === 'darwin') app.dock.show();
+    dashboardWindow.show();
+    dashboardWindow.focus();
+    dashboardWindow.webContents.send('stats-refresh');
+    return;
+  }
+
+  dashboardWindow = new BrowserWindow({
+    width: 920,
+    height: 720,
+    minWidth: 760,
+    minHeight: 560,
+    title: 'Brew Insights',
+    backgroundColor: '#1a1a2e',
+    titleBarStyle: 'hiddenInset',
+    icon: path.join(__dirname, 'assets', 'icon.icns'),
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  });
+
+  dashboardWindow.loadFile('dashboard.html');
+
+  // Hide instead of destroy so re-opening is instant and keeps scroll state.
+  dashboardWindow.on('close', (event) => {
+    if (!app.isQuitting) {
+      event.preventDefault();
+      dashboardWindow.hide();
     }
   });
 }
@@ -156,6 +209,13 @@ function updateTrayMenu() {
     },
     { type: 'separator' },
     {
+      label: 'Insights…',
+      click: () => {
+        if (process.platform === 'darwin') app.dock.show();
+        openDashboard();
+      }
+    },
+    {
       label: 'Check for Updates',
       click: async () => {
         // Show window and trigger update check in renderer
@@ -219,6 +279,8 @@ function startCaffeinate() {
   });
 
   isAwake = true;
+  // Open a usage session for this brew stretch.
+  if (stats) stats.startSession(nowMs(), isSlackMode);
   notifyRenderer();
   updateTrayMenu();
 }
@@ -229,6 +291,8 @@ function stopCaffeinate() {
     caffeinateProcess = null;
   }
   isAwake = false;
+  // Close the usage session (records duration + Slack time).
+  if (stats) stats.endSession(nowMs());
   notifyRenderer();
   updateTrayMenu();
 }
@@ -284,9 +348,13 @@ function startMouseJiggle() {
   jiggleMouse();
   mouseJiggleInterval = setInterval(jiggleMouse, JIGGLE_INTERVAL);
 
-  // Also start caffeinate if not already running
+  // Also start caffeinate if not already running. If a session is already open
+  // (brewing was on), just mark the Slack sub-interval as starting now; if not,
+  // startCaffeinate opens the session already flagged as Slack-active.
   if (!isAwake) {
     startCaffeinate();
+  } else if (stats) {
+    stats.setSlack(nowMs(), true);
   }
 
   notifyRenderer();
@@ -299,6 +367,8 @@ function stopMouseJiggle() {
     mouseJiggleInterval = null;
   }
   isSlackMode = false;
+  // Close the Slack sub-interval, but leave the brew session itself open.
+  if (stats) stats.setSlack(nowMs(), false);
   notifyRenderer();
   updateTrayMenu();
 }
@@ -308,6 +378,10 @@ function stopMouseJiggle() {
 function notifyRenderer() {
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send('status-changed', { isAwake, isSlackMode });
+  }
+  // Keep the dashboard live: any start/stop changes the numbers.
+  if (dashboardWindow && !dashboardWindow.isDestroyed()) {
+    dashboardWindow.webContents.send('stats-refresh');
   }
 }
 
@@ -380,9 +454,14 @@ ipcMain.handle('update:connect', async (_evt, { token } = {}) => {
 ipcMain.handle('update:disconnect', () => {
   if (updater && updater.soma) updater.soma.clearToken();
   // Re-lock: stop everything and send the window back to the gate.
+  if (stats) stats.finalizeOpenSession(nowMs());
   stopCaffeinate();
   stopMouseJiggle();
   updateTrayMenu();
+  // Hide the dashboard too — it's gated behind the connection.
+  if (dashboardWindow && !dashboardWindow.isDestroyed()) {
+    dashboardWindow.hide();
+  }
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.loadFile('gate.html');
   }
@@ -425,6 +504,26 @@ ipcMain.handle('get-app-version', () => {
   return CURRENT_VERSION;
 });
 
+// ----------------------------- Usage insights -----------------------------
+// Open the dashboard window from the renderer (the "Insights" button).
+ipcMain.handle('open-dashboard', () => {
+  openDashboard();
+  return { opened: true };
+});
+
+// Full aggregated insights payload for the dashboard. Gated: no connection,
+// no data.
+ipcMain.handle('stats:get', () => {
+  if (!stats || !isConnected()) return null;
+  return stats.getInsights(nowMs());
+});
+
+// Wipe all recorded usage history.
+ipcMain.handle('stats:reset', () => {
+  if (stats) stats.reset();
+  return { ok: true };
+});
+
 // ===== APP LIFECYCLE =====
 
 app.whenReady().then(() => {
@@ -432,6 +531,9 @@ app.whenReady().then(() => {
   // decide between the lock screen (gate.html) and the main UI (index.html).
   // `net` (used by SomaClient) is only usable after whenReady, which holds here.
   soma = new SomaClient({ owner: 'ssenapati', repo: 'Brew' });
+
+  // Usage stats recorder (persists sessions under userData).
+  stats = new Stats();
 
   createWindow();
   createTray();
@@ -444,6 +546,7 @@ app.whenReady().then(() => {
     // Stop keep-alive machinery before the updater relaunches the app.
     onBeforeRelaunch: () => {
       app.isQuitting = true;
+      if (stats) stats.finalizeOpenSession(nowMs());
       stopCaffeinate();
       stopMouseJiggle();
     },
@@ -473,6 +576,8 @@ app.on('activate', () => {
 
 app.on('before-quit', () => {
   app.isQuitting = true;
+  // Close any in-progress session so its time is recorded before we exit.
+  if (stats) stats.finalizeOpenSession(nowMs());
   stopCaffeinate();
   stopMouseJiggle();
 });

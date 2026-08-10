@@ -68,6 +68,15 @@ async function turnOff() {
   updateUI(status);
 }
 
+// Open the insights dashboard window.
+async function openInsights() {
+  try {
+    await window.brew.openDashboard();
+  } catch {
+    /* opening the dashboard is best-effort */
+  }
+}
+
 // Toggle Slack Mode
 async function toggleSlackMode() {
   const status = await window.brew.toggleSlackMode();
