@@ -141,6 +141,7 @@ body.brewing .steam-overlay {
   align-items: center;
   padding: 0 30px 24px;
   min-height: calc(100vh - 32px);
+  gap: 18px;
   justify-content: space-between;
 }
 
@@ -1350,7 +1351,6 @@ body.brewing::before {
   justify-content: center;
   gap: 10px;
   width: 100%;
-  margin: 4px 0 2px;
   padding: 13px 18px;
   background: rgba(212, 145, 92, 0.08);
   border: 1px solid rgba(212, 145, 92, 0.28);
