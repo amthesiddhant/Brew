@@ -218,6 +218,23 @@
     </div>
   </div>
 
+  <!-- Access gate: shown full-window when the signed-in user is not on the
+       allowlist. Blocks the app entirely (no brewing, no Slack mode). -->
+  <div id="accessDeniedView" class="access-denied hidden" role="dialog" aria-modal="true"
+       aria-labelledby="accessDeniedTitle">
+    <div class="access-card">
+      <div id="accessGlyph" class="access-glyph" aria-hidden="true"></div>
+      <h1 id="accessDeniedTitle">Access not enabled</h1>
+      <p class="access-msg">Brew isn’t enabled for your account yet.</p>
+      <p class="access-email">Signed in as <span id="accessEmail"></span></p>
+      <div class="access-actions">
+        <button id="accessRetryBtn" class="btn-update"><span class="btn-label">Retry</span></button>
+        <button id="accessLogoutBtn" class="soma-btn ghost">Sign out</button>
+      </div>
+      <p class="access-foot">Reach out to the Brew team to request access.</p>
+    </div>
+  </div>
+
   <script src="renderer.js"></script>
 </body>
 </html>

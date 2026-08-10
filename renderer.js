@@ -44,12 +44,90 @@ function createParticles() {
   }
 }
 
+// Full-window "Access not enabled" gate for users who aren't on the allowlist.
+// Blocks the whole app (no brewing, no Slack mode). Mirrors Genie's lock screen.
+// email is rendered via textContent (XSS-safe).
+const ACCESS_LOCK_SVG =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" ' +
+  'stroke-linecap="round" stroke-linejoin="round">' +
+  '<rect x="4" y="10.5" width="16" height="10.5" rx="2.5"></rect>' +
+  '<path d="M8 10.5V7a4 4 0 0 1 8 0v3.5"></path>' +
+  '<circle cx="12" cy="15.5" r="1.4" fill="currentColor" stroke="none"></circle>' +
+  '<path d="M12 16.9v1.6"></path></svg>';
+
+const accessDeniedView = document.getElementById('accessDeniedView');
+const accessGlyph = document.getElementById('accessGlyph');
+const accessEmail = document.getElementById('accessEmail');
+const accessRetryBtn = document.getElementById('accessRetryBtn');
+const accessLogoutBtn = document.getElementById('accessLogoutBtn');
+
+function showAccessDenied(email) {
+  if (accessGlyph && !accessGlyph.firstChild) {
+    accessGlyph.innerHTML = ACCESS_LOCK_SVG; // static markup — safe
+  }
+  if (accessEmail) accessEmail.textContent = email || '';
+  accessDeniedView.classList.remove('hidden');
+  // Trigger the entrance animation on the next frame (class toggle after unhide).
+  requestAnimationFrame(() => accessDeniedView.classList.add('show'));
+}
+
+function hideAccessDenied() {
+  accessDeniedView.classList.remove('show');
+  accessDeniedView.classList.add('hidden');
+}
+
+// Run the allowlist check. Fail OPEN on a thrown error (a gate bug must never
+// brick the app), but honor a clean "denied". Returns true if the app may open.
+async function runAccessGate() {
+  let access;
+  try {
+    access = await window.brew.checkAccess();
+  } catch (_) {
+    access = { allowed: true, reason: 'gate-error' };
+  }
+  if (access && access.allowed === false) {
+    showAccessDenied(access.email);
+    return false;
+  }
+  hideAccessDenied();
+  return true;
+}
+
 // Initialize
 async function init() {
   createCoffeeBeans();
   createParticles();
+  // Access gate first — only paint/wire the main UI for allowlisted users.
+  const allowed = await runAccessGate();
+  if (!allowed) return;
   const status = await window.brew.getStatus();
   updateUI(status);
+}
+
+// Access-denied page: re-run the gate, or sign out (disconnect SOMA → the main
+// process re-locks and reloads the gate screen).
+if (accessRetryBtn) {
+  accessRetryBtn.addEventListener('click', async () => {
+    accessRetryBtn.disabled = true;
+    try {
+      const allowed = await runAccessGate();
+      if (allowed) {
+        const status = await window.brew.getStatus();
+        updateUI(status);
+      }
+    } finally {
+      accessRetryBtn.disabled = false;
+    }
+  });
+}
+if (accessLogoutBtn) {
+  accessLogoutBtn.addEventListener('click', async () => {
+    try {
+      await window.brew.updateDisconnect();
+    } catch {
+      /* the main process reloads gate.html regardless */
+    }
+  });
 }
 
 // Turn ON

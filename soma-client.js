@@ -124,6 +124,23 @@ class SomaClient {
     }
   }
 
+  // Resolve the signed-in user's email from SOMA (GitHub Enterprise
+  // `/api/v3/user`). Used by the access gate to learn who's connected before
+  // deciding whether to open the app. SOMA returns the canonical
+  // salesforce.com address. Falls back to `<login>@salesforce.com` if the
+  // `email` field is empty (some GHE accounts hide it), then to '' on failure.
+  async getIdentityEmail() {
+    try {
+      const me = await this._apiJson('/api/v3/user');
+      const email = (me && me.email && String(me.email).trim()) || '';
+      if (email) return email;
+      const login = (me && me.login && String(me.login).trim()) || '';
+      return login ? `${login}@salesforce.com` : '';
+    } catch (_) {
+      return '';
+    }
+  }
+
   // Fetch the latest *published* release (drafts and prereleases excluded by
   // GHE). Returns the raw release object; callers read `.tag_name`. A 404 here
   // means the maintainer hasn't published a release yet — we translate that

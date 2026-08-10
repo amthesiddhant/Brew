@@ -4,6 +4,7 @@ const path = require('path');
 const SomaClient = require('./soma-client');
 const Updater = require('./updater');
 const Stats = require('./stats');
+const access = require('./access');
 
 let mainWindow;
 // Separate, larger window for the usage-insights dashboard. Created lazily the
@@ -502,6 +503,20 @@ ipcMain.handle('update:progress', () => {
 
 ipcMain.handle('get-app-version', () => {
   return CURRENT_VERSION;
+});
+
+// ----------------------------- Access gate --------------------------------
+// Allowlist check, read live from the shared "App Access" Google Sheet through
+// the local DX Gateway (see access.js). Identity is the connected SOMA
+// account's email. Returns { allowed, email, reason, offline }. Fail OPEN on a
+// thrown error (a gate bug must never brick the app), but honor a clean deny.
+ipcMain.handle('access:check', async () => {
+  if (!isConnected()) return { allowed: false, email: '', reason: 'not-connected', offline: false };
+  try {
+    return await access.check(() => soma.getIdentityEmail());
+  } catch (_) {
+    return { allowed: true, email: '', reason: 'gate-error', offline: false };
+  }
 });
 
 // ----------------------------- Usage insights -----------------------------

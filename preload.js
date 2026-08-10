@@ -7,6 +7,9 @@ contextBridge.exposeInMainWorld('brew', {
   turnOff: () => ipcRenderer.invoke('turn-off'),
   toggleSlackMode: () => ipcRenderer.invoke('toggle-slack-mode'),
   getAppVersion: () => ipcRenderer.invoke('get-app-version'),
+  // Access gate: check the signed-in SOMA user against the shared allowlist.
+  // Returns { allowed, email, reason, offline }.
+  checkAccess: () => ipcRenderer.invoke('access:check'),
   onStatusChanged: (callback) => {
     ipcRenderer.on('status-changed', (event, status) => callback(status));
   },
