@@ -553,6 +553,8 @@ async function initVersion() {
   try {
     const version = await window.brew.getAppVersion();
     currentVersionEl.textContent = version;
+    const footerVersionEl = document.getElementById('footerVersion');
+    if (footerVersionEl) footerVersionEl.textContent = version;
   } catch {
     /* ignore */
   }

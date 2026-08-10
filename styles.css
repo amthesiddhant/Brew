@@ -46,8 +46,9 @@ body {
   font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Helvetica Neue', sans-serif;
   background: linear-gradient(135deg, var(--bg-primary) 0%, var(--bg-secondary) 50%, var(--bg-tertiary) 100%);
   color: var(--text-primary);
-  height: 100vh;
-  overflow: hidden;
+  min-height: 100vh;
+  overflow-x: hidden;
+  overflow-y: auto;
   user-select: none;
   transition: background 1s ease, color 0.5s ease;
 }
@@ -139,7 +140,7 @@ body.brewing .steam-overlay {
   flex-direction: column;
   align-items: center;
   padding: 0 30px 24px;
-  height: calc(100vh - 32px);
+  min-height: calc(100vh - 32px);
   justify-content: space-between;
 }
 
