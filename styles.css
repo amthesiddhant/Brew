@@ -1377,6 +1377,12 @@ body.brewing::before {
 .dash-body {
   overflow-y: auto;
   height: 100vh;
+  /* The gradient is inherited from `body`, but this element is the scroll
+     container (fixed 100vh). Without pinning the background to the viewport it
+     would only paint one screen tall and scroll away, leaving a flat-colored
+     seam at the fold for any content below it. `fixed` keeps it covering the
+     whole scroll area. */
+  background-attachment: fixed;
 }
 .dash {
   max-width: 860px;
