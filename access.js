@@ -1,24 +1,26 @@
 'use strict';
 
-// Access allowlist gate — ported from Genie's access.js. On every launch
-// (after the SOMA connection is verified), we resolve the signed-in user's
-// email and check it against the shared "App Access" Google Sheet.
+// Access allowlist gate. On every launch (after the SOMA connection is
+// verified) we ask the Apps Script Web App whether the signed-in user is
+// allowed to open Brew.
 //
-// The sheet is read LIVE through the DX Gateway's `google_workspace` MCP server
-// (the same authenticated loopback proxy Genie uses) — via its
-// `read_sheet_values` tool. There is NO Apps Script, no public /exec URL and no
-// separate Google sign-in: the gateway already handles Google auth and reads as
-// the signed-in user. A user is allowed when their row has Access=Yes AND (if an
-// "App ID" column exists) App ID == Brew's id (AI761690). Match is
-// case-insensitive.
+// The web app (apps-script/Brew.gs, "Execute as: Me / Anyone within
+// Salesforce.com") reads the private "App Access" sheet with the OWNER's
+// permissions and answers for the *calling* user — whose identity it resolves
+// server-side from their Google session (unspoofable). This is what makes the
+// gate work for EVERY user, not just the sheet owner: the old DX Gateway path
+// read as each machine's own Google account, so it only worked for the owner.
+// Brew carries the user's Google cookies on the call (see webapp.js); the first
+// launch pops a one-time sign-in window.
 //
-// Identity: Brew has no OrgCS. Instead we use the connected SOMA account's email
-// (git.soma.salesforce.com /api/v3/user), which is already the canonical
-// salesforce.com address — the same namespace the allowlist admin maintains.
+// Identity for the local grace cache: the connected SOMA account's email
+// (git.soma.salesforce.com /api/v3/user), the canonical salesforce.com address.
+// The allow/deny DECISION comes from the web app; SOMA email is only the cache
+// key + what we display.
 //
 // Offline policy = GRACE: a user who passed the check before (recorded in a
-// local cache) stays allowed when the sheet can't be read (gateway down or not
-// Google-connected); only brand-new unknown users are denied while offline.
+// local cache) stays allowed when the web app can't be reached; only brand-new
+// unknown users are denied while offline.
 //
 // NOTE: this is an access-management convenience, not a hardened security
 // boundary. It decides who the app opens for.
@@ -27,7 +29,7 @@ const { app } = require('electron');
 const fs = require('fs');
 const path = require('path');
 const { ACCESS } = require('./access-config');
-const gateway = require('./gateway');
+const webapp = require('./webapp');
 
 function normEmail(s) {
   return String(s || '').trim().toLowerCase();
@@ -162,27 +164,30 @@ function withTimeout(p, ms, message) {
   });
 }
 
-// Read the allowlist from the sheet via the authenticated gateway. Resolves
-// { list:[...], updated }; rejects on gateway failure / malformed data.
-async function fetchAllowlist() {
-  const text = await withTimeout(
-    gateway.callTool('read_sheet_values', {
-      spreadsheet_id: ACCESS.sheetId,
-      range_name: ACCESS.rangeName,
-    }),
+// Ask the web app whether the CALLING user is allowed. The web app resolves the
+// caller's identity from their Google session server-side, so it returns a
+// single boolean for this user — not the whole list. Interactive: the launch
+// gate is allowed to pop the one-time sign-in window. Resolves { allowed }.
+// Rejects on transport error / not-configured / not-yet-authorized (→ GRACE).
+async function fetchAllowed() {
+  const res = await withTimeout(
+    webapp.call('checkAccess', {}, { interactive: true }),
     ACCESS.timeoutMs,
-    'access sheet read timed out'
+    'access check timed out'
   );
-  const list = allowedEmailsFromRows(parseSheetRows(text));
-  return { list, updated: null };
+  if (!res || res.ok !== true) {
+    throw new Error((res && res.error) || 'web app access check failed');
+  }
+  return { allowed: !!res.allowed };
 }
 
-// Resolve identity, read/evaluate the allowlist, apply grace. Returns:
+// Resolve identity, ask the web app, apply grace. Returns:
 //   { allowed:boolean, email:string, reason:string, offline:boolean }
 //
 // `resolveEmail` is an async function returning the signed-in user's email
 // (Brew passes soma.getIdentityEmail). Kept as a parameter so the gate has no
-// direct dependency on the SOMA client.
+// direct dependency on the SOMA client. It's the cache key + display value; the
+// authoritative allow/deny comes from the web app's own identity resolution.
 async function check(resolveEmail) {
   let email = '';
   try {
@@ -194,25 +199,20 @@ async function check(resolveEmail) {
   if (!email) return { allowed: false, email: '', reason: 'no-email', offline: false };
 
   try {
-    const { list, updated } = await fetchAllowlist();
-    const allowed = list.includes(email);
+    const { allowed } = await fetchAllowed();
     const cache = readCache();
-    cache.list = list;
-    // Stamp when this list was last confirmed online, so the Grace branch can
-    // expire a stale cached-list snapshot the same way it expires stale grants.
-    cache.updated = updated || new Date().toISOString();
     cache.grants = cache.grants || {};
-    // Record a fresh grant when allowed; CLEAR any stale grant when the live
-    // read says this user is no longer listed — so offline Grace can only ever
+    // Record a fresh grant when allowed; CLEAR any stale grant when the web app
+    // says this user is no longer allowed — so offline Grace can only ever
     // resurrect users we couldn't verify, never ones we verified as removed.
     if (allowed) cache.grants[email] = new Date().toISOString();
     else delete cache.grants[email];
     writeCache(cache);
     return { allowed, email, reason: allowed ? 'listed' : 'not-listed', offline: false };
   } catch (_) {
-    // Gateway down / not Google-connected / read failed → GRACE: allow if this
-    // email holds a grant confirmed within the grace window, or appears in the
-    // last cached list. A grant older than graceDays is treated as expired.
+    // Web app unreachable / not configured / not yet authorized → GRACE: allow
+    // if this email holds a grant confirmed within the grace window. A grant
+    // older than graceDays is treated as expired.
     const cache = readCache();
     const graceMs = Math.max(0, Number(ACCESS.graceDays) || 0) * 86400000;
     const withinGrace = (iso) => {
@@ -220,12 +220,7 @@ async function check(resolveEmail) {
       return Number.isFinite(t) && Date.now() - t <= graceMs;
     };
     const grantedAt = cache.grants && cache.grants[email];
-    const grantFresh = !!grantedAt && withinGrace(grantedAt);
-    const listFresh =
-      withinGrace(cache.updated) &&
-      Array.isArray(cache.list) &&
-      cache.list.includes(email);
-    const allowed = grantFresh || listFresh;
+    const allowed = !!grantedAt && withinGrace(grantedAt);
     return { allowed, email, reason: allowed ? 'grace' : 'offline-unknown', offline: true };
   }
 }

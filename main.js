@@ -25,19 +25,19 @@ function nowMs() {
 let updater = null;
 let soma = null;
 // Best-effort usage-tracking sync: mirrors the local session log to a Google
-// Sheet (one row per user per day) via the DX Gateway. Instantiated in
+// Sheet (one row per user per day) via the Apps Script Web App. Instantiated in
 // whenReady (needs soma + stats). All calls are fire-and-forget.
 let usageSync = null;
 // Debounce so overlapping triggers (stop-brewing + quit firing together) don't
-// stack up gateway round-trips.
+// stack up web-app round-trips.
 let usageSyncTimer = null;
 function scheduleUsageSync(delayMs = 1500) {
   if (!usageSync) return;
   if (usageSyncTimer) clearTimeout(usageSyncTimer);
   usageSyncTimer = setTimeout(() => {
     usageSyncTimer = null;
-    // Only sync for a connected user; the gateway/identity are meaningless
-    // without a SOMA connection. Never throws (usageSync.sync swallows).
+    // Only sync for a connected user; identity is meaningless without a SOMA
+    // connection. Never throws (usageSync.sync swallows).
     if (isConnected()) usageSync.sync(nowMs());
   }, delayMs);
 }
@@ -559,8 +559,9 @@ ipcMain.handle('get-app-version', () => {
 });
 
 // ----------------------------- Access gate --------------------------------
-// Allowlist check, read live from the shared "App Access" Google Sheet through
-// the local DX Gateway (see access.js). Identity is the connected SOMA
+// Allowlist check via the Apps Script Web App (see access.js / webapp.js): it
+// reads the shared "App Access" sheet with the owner's permissions and answers
+// for the signed-in Google user. Identity for the cache is the connected SOMA
 // account's email. Returns { allowed, email, reason, offline }. Fail OPEN on a
 // thrown error (a gate bug must never brick the app), but honor a clean deny.
 ipcMain.handle('access:check', async () => {
@@ -597,7 +598,7 @@ app.whenReady().then(() => {
   // Usage stats recorder (persists sessions under userData).
   stats = new Stats();
 
-  // Usage-sheet sync (best-effort mirror to Google Sheets via the DX Gateway).
+  // Usage-sheet sync (best-effort mirror to Google Sheets via the Web App).
   usageSync = new UsageSync({
     resolveIdentity: () => soma.getIdentity(),
     stats,

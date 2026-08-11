@@ -13,6 +13,23 @@
 // (AI761690). We match the signed-in SOMA user's email against those rows
 // (case-insensitive). Sheet edits need no app change — it's read on every launch.
 module.exports = {
+  // Apps Script Web App — the multi-user path for BOTH the access check and
+  // usage logging. Deployed "Execute as: Me / Anyone within Salesforce.com"
+  // (see apps-script/Brew.gs), it runs with the owner's permissions (full
+  // access to the private sheets) while any signed-in salesforce.com user can
+  // reach it over HTTPS. Brew authenticates by carrying the user's Google
+  // session cookies (persistent partition; see webapp.js) — no OAuth client, no
+  // token, no embedded secret. This REPLACES the DX Gateway for access + usage;
+  // the GCAL/gateway config below is retained only for any legacy fallback.
+  WEBAPP: {
+    // Paste the deployed /exec URL here (Deploy → New deployment → Web app).
+    // Looks like: https://script.google.com/a/macros/salesforce.com/s/AKfycb.../exec
+    // Until set, all web-app calls are a safe no-op (the app still ships/runs).
+    execUrl: 'https://script.google.com/a/macros/salesforce.com/s/AKfycbx8eNpnWN2Rrd5g2MLhbcLzfGe_LBKzH9XG6xtkjirgvUHi95Ri5L4ac9EnaPzuiBOA/exec',
+    // Bound the whole round-trip (ms). Apps Script cold-starts can be slow.
+    timeoutMs: 20000,
+  },
+
   // Google Workspace via the local DX MCP Gateway. The proxy port is assigned
   // dynamically by devbar; we discover it at runtime from devbar's log (see
   // dxgw.js), falling back to the well-known default.
@@ -56,31 +73,18 @@ module.exports = {
     graceDays: 7,
   },
 
-  // Usage tracking. Brew writes ONE row per user per day to a Google Sheet
-  // through the same DX Gateway used for the access gate. The local
-  // sessions.json log stays the source of truth; this is an opportunistic,
-  // best-effort mirror (a gateway outage never loses data — it re-syncs next
-  // launch). Upsert key = (Date + Email): today's existing row is updated in
-  // place, otherwise a new row is appended.
+  // Usage tracking. Brew sends ONE row per user per day to the WEBAPP above,
+  // which upserts it into the private "BrewUsage" sheet (keyed by Date + Email)
+  // with the owner's permissions. The local sessions.json log stays the source
+  // of truth; this is an opportunistic, best-effort mirror (an outage never
+  // loses data — it re-syncs next launch). The sheet id, tab, header row and
+  // upsert all live server-side in Brew.gs now; Brew only sends the rolled-up
+  // day totals. These two knobs stay client-side:
   USAGE: {
-    // Dedicated usage sheet (separate from the access sheet).
-    sheetId: '1_neG3QxbK0mHLYC2uC3rftl3ioGRMu5I3KdD_mwL5a4',
-    // Tab (sheet) name the rows live in.
-    tabName: 'BrewUsage',
-    // Column order for the row we write. Row 1 of the tab is a header with these
-    // exact labels; Brew ensures it exists on first sync.
-    headers: [
-      'Date', 'Email', 'Name', 'Total Brewing', 'Slack Time',
-      'Sessions', 'Longest Session', 'App Version', 'Last Updated',
-    ],
-    // google_workspace tool names on the gateway. Kept as config so a rename on
-    // the server side is a one-line change here, not a code edit.
-    readTool: 'read_sheet_values',
-    writeTool: 'modify_sheet_values',
     // How many trailing days to reconcile each sync (today + yesterday catches a
     // session that spanned local midnight or an app that was closed overnight).
     syncDays: 2,
-    // Bound the whole gateway round-trip (ms).
+    // Bound the whole round-trip (ms).
     timeoutMs: 20000,
   },
 };
