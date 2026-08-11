@@ -218,6 +218,32 @@
     </div>
   </div>
 
+  <!-- Force-update gate: shown full-window when a newer release is published on
+       SOMA. Blocks the app entirely until the user updates — there is no way to
+       dismiss it into the app. Fails OPEN (never shown) if the check errors. -->
+  <div id="forceUpdateView" class="force-update hidden" role="dialog" aria-modal="true"
+       aria-labelledby="forceUpdateTitle">
+    <div class="access-card">
+      <div id="forceUpdateGlyph" class="access-glyph force-glyph" aria-hidden="true"></div>
+      <h1 id="forceUpdateTitle">Update required</h1>
+      <p class="access-msg">A newer version of Brew is available. Please update to keep using the app.</p>
+      <p class="access-email">v<span id="forceCurrentVersion"></span> → v<span id="forceLatestVersion"></span></p>
+      <div class="force-notes hidden" id="forceUpdateNotes"></div>
+      <div class="access-actions">
+        <button id="forceUpdateBtn" class="btn-update"><span class="btn-label">Update now</span></button>
+      </div>
+      <!-- Progress bar (shown while downloading/installing the update). -->
+      <div class="update-progress" id="forceUpdateProgress" style="display: none;">
+        <div class="update-progress-label" id="forceUpdateProgressLabel">Downloading…</div>
+        <div class="update-progress-bar">
+          <div class="update-progress-fill" id="forceUpdateProgressFill"></div>
+        </div>
+        <div class="update-progress-percent" id="forceUpdateProgressPercent">0%</div>
+      </div>
+      <p class="access-foot">Brew will restart itself once the update is installed.</p>
+    </div>
+  </div>
+
   <!-- Access gate: shown full-window when the signed-in user is not on the
        allowlist. Blocks the app entirely (no brewing, no Slack mode). -->
   <div id="accessDeniedView" class="access-denied hidden" role="dialog" aria-modal="true"

@@ -93,6 +93,138 @@ async function runAccessGate() {
   return true;
 }
 
+// Full-window "Update required" gate. When SOMA has a newer published release
+// (with an installer attached), Brew blocks the whole app behind this screen
+// until the user updates — there is no dismiss-into-the-app path. Mirrors the
+// access gate. Fails OPEN (never blocks) on a check error, so a network blip
+// can't brick the app; it only blocks when it KNOWS a newer version exists.
+const FORCE_UPDATE_SVG =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" ' +
+  'stroke-linecap="round" stroke-linejoin="round">' +
+  '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>' +
+  '<polyline points="7 10 12 15 17 10"></polyline>' +
+  '<line x1="12" y1="15" x2="12" y2="3"></line></svg>';
+
+const forceUpdateView = document.getElementById('forceUpdateView');
+const forceUpdateGlyph = document.getElementById('forceUpdateGlyph');
+const forceCurrentVersion = document.getElementById('forceCurrentVersion');
+const forceLatestVersion = document.getElementById('forceLatestVersion');
+const forceUpdateNotes = document.getElementById('forceUpdateNotes');
+const forceUpdateBtn = document.getElementById('forceUpdateBtn');
+const forceUpdateProgress = document.getElementById('forceUpdateProgress');
+const forceUpdateProgressLabel = document.getElementById('forceUpdateProgressLabel');
+const forceUpdateProgressFill = document.getElementById('forceUpdateProgressFill');
+const forceUpdateProgressPercent = document.getElementById('forceUpdateProgressPercent');
+
+let forceUpdateInfo = null; // the mandatory-update payload (version + notes)
+
+function showForceUpdate(info) {
+  forceUpdateInfo = info;
+  if (forceUpdateGlyph && !forceUpdateGlyph.firstChild) {
+    forceUpdateGlyph.innerHTML = FORCE_UPDATE_SVG; // static markup — safe
+  }
+  if (forceCurrentVersion) forceCurrentVersion.textContent = info.currentVersion || '';
+  if (forceLatestVersion) forceLatestVersion.textContent = info.version || '';
+  if (forceUpdateNotes) {
+    const notes = (info.notes || '').trim();
+    if (notes) {
+      forceUpdateNotes.textContent = notes.substring(0, 400) + (notes.length > 400 ? '…' : '');
+      forceUpdateNotes.classList.remove('hidden');
+    } else {
+      forceUpdateNotes.textContent = '';
+      forceUpdateNotes.classList.add('hidden');
+    }
+  }
+  forceUpdateView.classList.remove('hidden');
+  requestAnimationFrame(() => forceUpdateView.classList.add('show'));
+}
+
+// Ask the main process whether a newer installable release exists. Returns true
+// if the app must NOT open (a mandatory update is showing). Fails open on any
+// error or when not connected — the app opens normally in those cases.
+async function runForceUpdateGate() {
+  let res;
+  try {
+    res = await window.brew.updateCheck();
+  } catch (_) {
+    return false; // fail open — never brick the app on a check error
+  }
+  // Only block when we positively know a newer version with an installer is
+  // available. `needsAuth`, `error`, or no installer → let the app open.
+  if (res && res.available && res.hasInstaller) {
+    showForceUpdate({
+      version: res.version,
+      notes: res.notes,
+      currentVersion: res.currentVersion || currentVersionEl.textContent,
+    });
+    return true;
+  }
+  return false;
+}
+
+// "Update now" on the force-update gate — download + swap + relaunch. Reuses
+// the main process install flow; polls progress into the gate's own bar.
+async function forceInstallUpdate() {
+  if (!forceUpdateBtn) return;
+  forceUpdateBtn.disabled = true;
+  const btnLabel = forceUpdateBtn.querySelector('.btn-label');
+  if (btnLabel) btnLabel.textContent = 'Updating…';
+
+  forceUpdateProgress.style.display = 'block';
+  forceUpdateProgressFill.style.width = '0%';
+  forceUpdateProgressFill.classList.remove('installing', 'error');
+  forceUpdateProgressLabel.textContent = 'Downloading…';
+  forceUpdateProgressPercent.textContent = '0%';
+
+  let pollId = setInterval(async () => {
+    try {
+      const p = await window.brew.updateProgress();
+      const pct = Math.max(0, Math.min(100, p.progress || 0));
+      forceUpdateProgressFill.style.width = `${pct}%`;
+      if (pct >= 100) {
+        forceUpdateProgressLabel.textContent = 'Installing…';
+        forceUpdateProgressPercent.textContent = '';
+        forceUpdateProgressFill.classList.add('installing');
+      } else {
+        forceUpdateProgressLabel.textContent = 'Downloading…';
+        forceUpdateProgressPercent.textContent = `${pct}%`;
+      }
+    } catch {
+      /* ignore transient poll errors */
+    }
+  }, 400);
+
+  const stopPoll = () => { if (pollId) { clearInterval(pollId); pollId = null; } };
+
+  try {
+    const res = await window.brew.updateInstall();
+    stopPoll();
+    if (res && res.deferred) {
+      // User chose "Later" at the OS confirm dialog. Keep them on the gate.
+      forceUpdateProgress.style.display = 'none';
+      forceUpdateBtn.disabled = false;
+      if (btnLabel) btnLabel.textContent = 'Update now';
+    } else {
+      forceUpdateProgressFill.style.width = '100%';
+      forceUpdateProgressFill.classList.add('installing');
+      forceUpdateProgressLabel.textContent = 'Restarting…';
+      forceUpdateProgressPercent.textContent = '';
+    }
+  } catch (e) {
+    stopPoll();
+    forceUpdateProgressFill.style.width = '100%';
+    forceUpdateProgressFill.classList.add('error');
+    forceUpdateProgressLabel.textContent = `Error: ${cleanErrorMessage((e && e.message) || e)}`;
+    forceUpdateProgressPercent.textContent = '';
+    forceUpdateBtn.disabled = false;
+    if (btnLabel) btnLabel.textContent = 'Try again';
+  }
+}
+
+if (forceUpdateBtn) {
+  forceUpdateBtn.addEventListener('click', forceInstallUpdate);
+}
+
 // Initialize
 async function init() {
   createCoffeeBeans();
@@ -100,6 +232,9 @@ async function init() {
   // Access gate first — only paint/wire the main UI for allowlisted users.
   const allowed = await runAccessGate();
   if (!allowed) return;
+  // Force-update gate next — a mandatory update blocks the app entirely.
+  const mustUpdate = await runForceUpdateGate();
+  if (mustUpdate) return;
   const status = await window.brew.getStatus();
   updateUI(status);
 }

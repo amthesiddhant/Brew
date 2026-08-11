@@ -1712,3 +1712,46 @@ body.brewing::before {
   font-size: 11px;
   color: var(--text-muted);
 }
+
+/* Force-update gate — a blocking full-window screen shown when a newer release
+   is published. Reuses the access-card layout/animation; only the accent color
+   and a couple of extras differ. */
+.force-update {
+  position: fixed;
+  inset: 0;
+  z-index: 2100; /* above the access gate */
+  display: grid;
+  place-items: center;
+  padding: 32px;
+  background: linear-gradient(135deg, var(--bg-primary) 0%, var(--bg-secondary) 50%, var(--bg-tertiary) 100%);
+}
+.force-update.hidden {
+  display: none;
+}
+.force-update.show .access-card {
+  animation: access-in 0.5s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.force-update.show .access-glyph {
+  animation: access-glyph-in 0.6s cubic-bezier(0.34, 1.56, 0.64, 1) 0.08s both;
+}
+/* Coffee-amber accent (this is a friendly "please update", not an error). */
+.force-glyph {
+  color: #f5c478;
+}
+.force-notes {
+  margin: 16px auto 0;
+  max-width: 300px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+  white-space: pre-line;
+  text-align: left;
+  max-height: 120px;
+  overflow-y: auto;
+}
+.force-notes.hidden {
+  display: none;
+}
+.force-update .update-progress {
+  margin-top: 20px;
+}
