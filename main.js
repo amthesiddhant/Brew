@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage, shell } = require('electron');
+const { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage, shell, Notification } = require('electron');
 const { spawn } = require('child_process');
 const path = require('path');
 const SomaClient = require('./soma-client');
@@ -386,6 +386,39 @@ function notifyRenderer() {
   }
 }
 
+// ===== UPDATE NOTIFICATION =====
+// A background check that finds a newer release both shows the in-app pop-up
+// (via the renderer) and fires a native macOS notification, so the user is
+// alerted even when Brew is in the background/tray. We de-dupe by version so
+// the hourly re-check doesn't re-notify for the same release each hour.
+let lastNotifiedVersion = null;
+
+function notifyUpdateAvailable(info) {
+  const version = info && info.version;
+  if (!version || version === lastNotifiedVersion) return;
+  if (!Notification.isSupported()) return;
+  lastNotifiedVersion = version;
+
+  const iconPath = path.join(__dirname, 'assets', 'icon.png');
+  const notification = new Notification({
+    title: 'Brew update available',
+    body: `Version ${version} is ready to install. Open Brew to update.`,
+    silent: false,
+    icon: require('fs').existsSync(iconPath) ? iconPath : undefined,
+  });
+
+  // Clicking the banner brings Brew forward so the in-app prompt is visible.
+  notification.on('click', () => {
+    if (process.platform === 'darwin') app.dock.show();
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.show();
+      mainWindow.focus();
+    }
+  });
+
+  notification.show();
+}
+
 // ===== UPDATE CHECKER =====
 // The self-updater now lives in updater.js + soma-client.js: it reads Brew's
 // latest published Release on SOMA (git.soma.salesforce.com) and swaps the app
@@ -560,12 +593,14 @@ app.whenReady().then(() => {
       stopMouseJiggle();
     },
     // When a background check finds a newer release, tell the renderer so it
-    // can show a centered "update available" prompt. The renderer decides
-    // whether to actually display it (it honors a 24h per-version snooze).
+    // can show a centered "update available" prompt (the renderer honors a 24h
+    // per-version snooze), AND fire a native macOS notification so the user is
+    // alerted even when Brew is in the background or tray.
     onUpdateAvailable: (info) => {
       if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send('update:available', info);
       }
+      notifyUpdateAvailable(info);
     },
   });
   updater.startAutoCheck();
