@@ -5,6 +5,7 @@ const SomaClient = require('./soma-client');
 const Updater = require('./updater');
 const Stats = require('./stats');
 const access = require('./access');
+const UsageSync = require('./usage-sync');
 
 let mainWindow;
 // Separate, larger window for the usage-insights dashboard. Created lazily the
@@ -23,6 +24,23 @@ function nowMs() {
 // bundle in place. Wired up in app.whenReady (SomaClient's `net` needs ready).
 let updater = null;
 let soma = null;
+// Best-effort usage-tracking sync: mirrors the local session log to a Google
+// Sheet (one row per user per day) via the DX Gateway. Instantiated in
+// whenReady (needs soma + stats). All calls are fire-and-forget.
+let usageSync = null;
+// Debounce so overlapping triggers (stop-brewing + quit firing together) don't
+// stack up gateway round-trips.
+let usageSyncTimer = null;
+function scheduleUsageSync(delayMs = 1500) {
+  if (!usageSync) return;
+  if (usageSyncTimer) clearTimeout(usageSyncTimer);
+  usageSyncTimer = setTimeout(() => {
+    usageSyncTimer = null;
+    // Only sync for a connected user; the gateway/identity are meaningless
+    // without a SOMA connection. Never throws (usageSync.sync swallows).
+    if (isConnected()) usageSync.sync(nowMs());
+  }, delayMs);
+}
 // SOMA gate: Brew will not proceed to its main UI without a saved SOMA token.
 // The window boots into gate.html (lock screen) and only loads index.html once
 // connected. Disconnecting re-locks the window.
@@ -294,6 +312,8 @@ function stopCaffeinate() {
   isAwake = false;
   // Close the usage session (records duration + Slack time).
   if (stats) stats.endSession(nowMs());
+  // Mirror the day's totals to the usage sheet (best-effort, debounced).
+  scheduleUsageSync();
   notifyRenderer();
   updateTrayMenu();
 }
@@ -576,6 +596,17 @@ app.whenReady().then(() => {
 
   // Usage stats recorder (persists sessions under userData).
   stats = new Stats();
+
+  // Usage-sheet sync (best-effort mirror to Google Sheets via the DX Gateway).
+  usageSync = new UsageSync({
+    resolveIdentity: () => soma.getIdentity(),
+    stats,
+    appVersion: CURRENT_VERSION,
+  });
+  // Sync shortly after launch: reconciles today + yesterday, so a session that
+  // ended while the app was closed (or spanned midnight) still lands in the
+  // sheet. Delayed so startup isn't blocked; skips silently until connected.
+  setTimeout(() => scheduleUsageSync(0), 12000);
 
   createWindow();
   createTray();

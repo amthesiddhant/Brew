@@ -1,6 +1,6 @@
 {
   "name": "brew",
-  "version": "1.9.8",
+  "version": "1.9.9",
   "description": "Brew - Keep your MacBook awake with a fresh cup of coffee",
   "main": "main.js",
   "scripts": {
@@ -34,6 +34,7 @@
       "access-config.js",
       "gateway.js",
       "dxgw.js",
+      "usage-sync.js",
       "assets/**/*",
       "package.json"
     ],

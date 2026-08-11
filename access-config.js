@@ -55,4 +55,32 @@ module.exports = {
     // their grant immediately (revocation is instant online).
     graceDays: 7,
   },
+
+  // Usage tracking. Brew writes ONE row per user per day to a Google Sheet
+  // through the same DX Gateway used for the access gate. The local
+  // sessions.json log stays the source of truth; this is an opportunistic,
+  // best-effort mirror (a gateway outage never loses data — it re-syncs next
+  // launch). Upsert key = (Date + Email): today's existing row is updated in
+  // place, otherwise a new row is appended.
+  USAGE: {
+    // Dedicated usage sheet (separate from the access sheet).
+    sheetId: '1_neG3QxbK0mHLYC2uC3rftl3ioGRMu5I3KdD_mwL5a4',
+    // Tab (sheet) name the rows live in.
+    tabName: 'BrewUsage',
+    // Column order for the row we write. Row 1 of the tab is a header with these
+    // exact labels; Brew ensures it exists on first sync.
+    headers: [
+      'Date', 'Email', 'Name', 'Total Brewing', 'Slack Time',
+      'Sessions', 'Longest Session', 'App Version', 'Last Updated',
+    ],
+    // google_workspace tool names on the gateway. Kept as config so a rename on
+    // the server side is a one-line change here, not a code edit.
+    readTool: 'read_sheet_values',
+    writeTool: 'modify_sheet_values',
+    // How many trailing days to reconcile each sync (today + yesterday catches a
+    // session that spanned local midnight or an app that was closed overnight).
+    syncDays: 2,
+    // Bound the whole gateway round-trip (ms).
+    timeoutMs: 20000,
+  },
 };

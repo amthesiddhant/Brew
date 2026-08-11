@@ -261,6 +261,46 @@ class Stats {
     return streak;
   }
 
+  // Per-day rollups for the last `days` LOCAL days (today first). Each entry:
+  //   { date:'YYYY-MM-DD', dayStart, totalMs, slackMs, count, longestMs }
+  // A session is attributed to its START day (same convention the dashboard
+  // buckets use). The live open session is folded into its day so today's
+  // rollup reflects in-progress brewing. Used by the usage-sheet sync.
+  dayRollups(now, days = 2) {
+    const todayStart = this._startOfDay(new Date(now));
+    const out = [];
+    const index = new Map();
+    const pad = (n) => String(n).padStart(2, '0');
+
+    for (let i = 0; i < days; i++) {
+      const dayStart = todayStart - i * DAY_MS;
+      const d = new Date(dayStart);
+      const date = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+      const bucket = { date, dayStart, totalMs: 0, slackMs: 0, count: 0, longestMs: 0 };
+      out.push(bucket);
+      index.set(dayStart, bucket);
+    }
+
+    const addTo = (start, ms, slack) => {
+      const b = index.get(this._startOfDay(new Date(start)));
+      if (!b) return;
+      b.totalMs += ms;
+      b.slackMs += slack;
+      b.count += 1;
+      if (ms > b.longestMs) b.longestMs = ms;
+    };
+
+    for (const s of this.data.sessions) addTo(s.start, s.durationMs, s.slackMs || 0);
+    if (this.open) {
+      const liveMs = Math.max(0, now - this.open.start);
+      let liveSlack = this.open.slackAccumMs;
+      if (this.open.slackStart != null) liveSlack += Math.max(0, now - this.open.slackStart);
+      addTo(this.open.start, liveMs, Math.min(liveSlack, liveMs));
+    }
+
+    return out;
+  }
+
   // The full payload the dashboard renders.
   getInsights(now) {
     const nowDate = new Date(now);

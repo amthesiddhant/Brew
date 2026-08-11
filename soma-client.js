@@ -141,6 +141,23 @@ class SomaClient {
     }
   }
 
+  // Resolve the signed-in user's identity (email + display name) from SOMA in a
+  // single API call. Used by the usage-sheet sync, which records both. Email
+  // follows the same fallback as getIdentityEmail; name falls back to the login
+  // when the GHE profile has no display name. Returns { email, name } (either
+  // may be '' on failure).
+  async getIdentity() {
+    try {
+      const me = await this._apiJson('/api/v3/user');
+      const login = (me && me.login && String(me.login).trim()) || '';
+      const email = (me && me.email && String(me.email).trim()) || (login ? `${login}@salesforce.com` : '');
+      const name = (me && me.name && String(me.name).trim()) || login;
+      return { email, name };
+    } catch (_) {
+      return { email: '', name: '' };
+    }
+  }
+
   // Fetch the latest *published* release (drafts and prereleases excluded by
   // GHE). Returns the raw release object; callers read `.tag_name`. A 404 here
   // means the maintainer hasn't published a release yet — we translate that
