@@ -198,6 +198,128 @@ function render() {
   renderLive();
 }
 
+// ---- Admin view (Team Usage) ----------------------------------------------
+// Shown ONLY when the web app confirms the signed-in user has an Admin/Owner
+// role. The decision is made server-side (unspoofable Google identity); this
+// just paints the rows it returns. All cell text is set via textContent, so
+// user-supplied Name/Email can never inject markup.
+
+let adminRows = null;        // cached rows from the server, or null until loaded
+let adminIsAdmin = false;    // whether the admin panel is active
+let adminFilter = '';        // current search text (lowercased)
+let adminSort = { key: 'date', dir: -1 }; // default: newest date first
+
+const ADMIN_COLS = [
+  { key: 'Date' }, { key: 'Name' }, { key: 'Email' }, { key: 'Total Brewing' },
+  { key: 'Slack Time' }, { key: 'Sessions' }, { key: 'Longest Session' },
+  { key: 'App Version' }, { key: 'Last Updated' },
+];
+
+// Map a table header's data-sort token to the sheet column key it sorts on.
+const SORT_KEY_TO_COL = {
+  date: 'Date', name: 'Name', email: 'Email', totalBrewing: 'Total Brewing',
+  slackTime: 'Slack Time', sessions: 'Sessions', longestSession: 'Longest Session',
+  appVersion: 'App Version', lastUpdated: 'Last Updated',
+};
+
+function adminRowMatches(row, q) {
+  if (!q) return true;
+  const name = String(row['Name'] || '').toLowerCase();
+  const email = String(row['Email'] || '').toLowerCase();
+  return name.includes(q) || email.includes(q);
+}
+
+// Sessions sort numerically; everything else as strings. Good enough — the
+// duration columns are pre-formatted strings and sort lexically, which is fine
+// for a quick glance (the Date + numeric sessions cover the real use).
+function compareRows(a, b, col, dir) {
+  const av = a[col] == null ? '' : a[col];
+  const bv = b[col] == null ? '' : b[col];
+  if (col === 'Sessions') {
+    return (Number(av) - Number(bv)) * dir;
+  }
+  return String(av).localeCompare(String(bv)) * dir;
+}
+
+function renderAdminTable() {
+  const body = document.getElementById('adminTableBody');
+  const empty = document.getElementById('adminEmpty');
+  if (!body) return;
+
+  const all = Array.isArray(adminRows) ? adminRows : [];
+  const col = SORT_KEY_TO_COL[adminSort.key] || 'Date';
+  const rows = all
+    .filter((r) => adminRowMatches(r, adminFilter))
+    .sort((a, b) => compareRows(a, b, col, adminSort.dir));
+
+  body.replaceChildren();
+  if (rows.length === 0) {
+    empty.style.display = 'flex';
+    empty.querySelector('p').textContent = all.length === 0
+      ? 'No team usage recorded yet.'
+      : 'No rows match your filter.';
+    return;
+  }
+  empty.style.display = 'none';
+
+  for (const r of rows) {
+    const tr = document.createElement('tr');
+    for (const c of ADMIN_COLS) {
+      const td = document.createElement('td');
+      td.textContent = r[c.key] == null ? '' : String(r[c.key]); // XSS-safe
+      tr.appendChild(td);
+    }
+    body.appendChild(tr);
+  }
+}
+
+async function loadAdmin() {
+  try {
+    if (!window.brew.adminWhoAmI) return;
+    const who = await window.brew.adminWhoAmI();
+    adminIsAdmin = !!(who && who.isAdmin);
+    const panel = document.getElementById('adminPanel');
+    if (!adminIsAdmin) {
+      if (panel) panel.style.display = 'none';
+      return;
+    }
+    const res = await window.brew.adminGetUsage();
+    if (!res || !res.ok || !res.isAdmin) {
+      if (panel) panel.style.display = 'none';
+      return;
+    }
+    adminRows = Array.isArray(res.rows) ? res.rows : [];
+    if (panel) panel.style.display = '';
+    const hint = document.getElementById('adminHint');
+    if (hint) {
+      const users = new Set(adminRows.map((r) => String(r['Email'] || '').toLowerCase()).filter(Boolean));
+      hint.textContent = `${adminRows.length} row${adminRows.length === 1 ? '' : 's'} · ${users.size} teammate${users.size === 1 ? '' : 's'}`;
+    }
+    renderAdminTable();
+  } catch {
+    /* admin view is additive — any failure just leaves it hidden */
+  }
+}
+
+// Wire admin search + sortable headers once at load.
+function wireAdminControls() {
+  const search = document.getElementById('adminSearch');
+  if (search) {
+    search.addEventListener('input', () => {
+      adminFilter = search.value.trim().toLowerCase();
+      renderAdminTable();
+    });
+  }
+  document.querySelectorAll('.admin-table th[data-sort]').forEach((th) => {
+    th.addEventListener('click', () => {
+      const key = th.dataset.sort;
+      if (adminSort.key === key) adminSort.dir *= -1;
+      else adminSort = { key, dir: key === 'date' ? -1 : 1 };
+      renderAdminTable();
+    });
+  });
+}
+
 // ---- Data + events ---------------------------------------------------------
 
 async function refresh() {
@@ -233,3 +355,9 @@ if (window.brew.onStatsRefresh) {
 setInterval(refresh, 1000);
 
 refresh();
+
+// Admin "Team Usage" panel: wire controls, then load once (it self-hides for
+// non-admins). This is a network round-trip to the web app, so it runs once at
+// open rather than on the 1s tick.
+wireAdminControls();
+loadAdmin();

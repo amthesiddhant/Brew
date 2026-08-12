@@ -51,6 +51,18 @@ deployment mints a *new* URL (which then needs re-pasting into `access-config.js
 |---------------|--------------------------------------------------|---------|
 | `checkAccess` | reads "App Access", matches caller's email       | `{ ok, allowed, email, reason }` |
 | `logUsage`    | upserts one row per (Date + Email) in "BrewUsage"| `{ ok, action }` |
+| `whoAmI`      | reads caller's **Role** in "App Access"          | `{ ok, email, role, isAdmin }` |
+| `getUsage`    | **admins only** — reads ALL "BrewUsage" rows     | `{ ok, isAdmin, rows, count }` or `{ ok:false, error:'forbidden' }` |
 
-Both stamp/verify the caller identity **server-side** — the request body cannot
-claim to be a different user.
+All actions stamp/verify the caller identity **server-side** — the request body
+cannot claim to be a different user.
+
+### Admin (Team Usage) view
+
+`getUsage` powers the dashboard's **Team Usage** table, which lets an admin see
+every teammate's daily brewing. The admin decision is made **entirely
+server-side**: the caller's Role comes from the "App Access" sheet's **Role**
+column (`Admin` | `Owner` | `User` | `Viewer`), matched against their
+Google-authenticated email. `Admin` and `Owner` may read everyone; `User` and
+`Viewer` get `forbidden`. To grant/revoke admin, just edit the Role cell in the
+sheet — no code change or redeploy.

@@ -119,6 +119,41 @@
         </div>
       </div>
     </section>
+
+    <!-- Admin-only: everyone's usage. Hidden unless the server confirms the
+         signed-in user has an Admin/Owner role. Populated by dashboard.js. -->
+    <section class="admin-panel" id="adminPanel" style="display:none;">
+      <div class="chart-head">
+        <div>
+          <h2 class="chart-title">Team Usage</h2>
+          <p class="chart-hint" id="adminHint">Every teammate's daily brewing</p>
+        </div>
+        <div class="admin-controls">
+          <input type="search" id="adminSearch" class="admin-search" placeholder="Filter by name or email…" autocomplete="off">
+        </div>
+      </div>
+      <div class="admin-table-wrap">
+        <table class="admin-table">
+          <thead>
+            <tr>
+              <th class="col-date" data-sort="date">Date</th>
+              <th data-sort="name">Name</th>
+              <th data-sort="email">Email</th>
+              <th class="num" data-sort="totalBrewing">Total Brewing</th>
+              <th class="num" data-sort="slackTime">Slack Time</th>
+              <th class="num" data-sort="sessions">Sessions</th>
+              <th class="num" data-sort="longestSession">Longest</th>
+              <th data-sort="appVersion">Version</th>
+              <th data-sort="lastUpdated">Last Updated</th>
+            </tr>
+          </thead>
+          <tbody id="adminTableBody"></tbody>
+        </table>
+        <div class="admin-empty" id="adminEmpty" style="display:none;">
+          <p>No team usage recorded yet.</p>
+        </div>
+      </div>
+    </section>
   </div>
 
   <script src="dashboard.js"></script>

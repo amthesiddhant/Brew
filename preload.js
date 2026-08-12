@@ -38,6 +38,13 @@ contextBridge.exposeInMainWorld('brew', {
   // Usage insights dashboard.
   openDashboard: () => ipcRenderer.invoke('open-dashboard'),
   statsGet: () => ipcRenderer.invoke('stats:get'),
+  // Admin: whether the signed-in user may see everyone's usage (decided
+  // server-side from their unspoofable Google identity). Returns
+  // { isAdmin, role, email }.
+  adminWhoAmI: () => ipcRenderer.invoke('admin:whoami'),
+  // Admin: all users' daily usage rows from the shared BrewUsage sheet. Returns
+  // { ok, isAdmin, rows } — rows is [] for non-admins (the server enforces it).
+  adminGetUsage: () => ipcRenderer.invoke('admin:getUsage'),
   // The main process pings this whenever the numbers change (start/stop) or the
   // dashboard is re-shown, so the view can re-pull and re-render.
   onStatsRefresh: (handler) => {

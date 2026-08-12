@@ -64,6 +64,12 @@ var USAGE_HEADERS = [
 // sheet. Canonicalize both sides before comparing.
 var DOMAIN_ALIASES = { 'orgcs.com': 'salesforce.com' };
 
+// The "App Access" sheet has a "Role" column: Admin | Owner | User | Viewer.
+// Admins (and Owners) may read EVERY user's usage via action "getUsage";
+// everyone else only ever sees their own dashboard (client-side, local data).
+// Matched case-insensitively against the caller's row for THIS app.
+var ADMIN_ROLES = ['admin', 'owner'];
+
 // ---------------------------------------------------------------------------
 // HTTP entry points
 // ---------------------------------------------------------------------------
@@ -91,6 +97,12 @@ function doPost(e) {
     }
     if (action === 'logUsage') {
       return jsonOut(handleLogUsage_(email, payload));
+    }
+    if (action === 'getUsage') {
+      return jsonOut(handleGetUsage_(email));
+    }
+    if (action === 'whoAmI') {
+      return jsonOut(handleWhoAmI_(email));
     }
     return jsonOut({ ok: false, error: 'Unknown action: ' + action });
   } catch (err) {
@@ -165,6 +177,101 @@ function allowedEmails_() {
   return out;
 }
 
+// Return the caller's Role from the "App Access" sheet for THIS app, lowercased
+// (e.g. 'admin', 'owner', 'user', 'viewer'), or '' if they have no matching row
+// or the sheet has no Role column. Column matched by HEADER name.
+function roleForEmail_(email) {
+  var want = canonEmail_(email);
+  if (!want) return '';
+  var ss = SpreadsheetApp.openById(ACCESS_SHEET_ID);
+  var sheet = ss.getSheetByName(ACCESS_TAB);
+  if (!sheet) return '';
+  var values = sheet.getDataRange().getValues();
+  if (!values || values.length < 2) return '';
+
+  var header = values[0].map(function (h) { return String(h == null ? '' : h).trim().toLowerCase(); });
+  var iEmail = header.indexOf('email');
+  var iRole = header.indexOf('role');
+  var iApp = header.indexOf('app id');
+  if (iEmail === -1 || iRole === -1) return '';
+
+  var appWant = String(ACCESS_APP_ID || '').trim().toLowerCase();
+  for (var r = 1; r < values.length; r++) {
+    var row = values[r];
+    if (appWant && iApp !== -1 &&
+        String(row[iApp] == null ? '' : row[iApp]).trim().toLowerCase() !== appWant) continue;
+    if (canonEmail_(row[iEmail]) === want) {
+      return String(row[iRole] == null ? '' : row[iRole]).trim().toLowerCase();
+    }
+  }
+  return '';
+}
+
+function isAdminRole_(role) {
+  return ADMIN_ROLES.indexOf(String(role || '').trim().toLowerCase()) !== -1;
+}
+
+// ---------------------------------------------------------------------------
+// action: whoAmI
+// ---------------------------------------------------------------------------
+// Lets the client learn the caller's identity + whether they're an admin, so
+// the dashboard can decide whether to show the "all users" view. The client
+// NEVER decides admin on its own — this (and getUsage) are the authority.
+function handleWhoAmI_(email) {
+  var role = roleForEmail_(email);
+  return { ok: true, email: email, role: role, isAdmin: isAdminRole_(role) };
+}
+
+// ---------------------------------------------------------------------------
+// action: getUsage  (ADMIN ONLY)
+// ---------------------------------------------------------------------------
+// Returns every row of the "BrewUsage" sheet as structured objects, but ONLY if
+// the CALLER'S role (resolved server-side from their unspoofable Google
+// identity) is an admin role. A non-admin gets { ok:false, error:'forbidden' }
+// — the request body cannot claim admin.
+function handleGetUsage_(email) {
+  var role = roleForEmail_(email);
+  if (!isAdminRole_(role)) {
+    return { ok: false, error: 'forbidden', reason: 'not-admin' };
+  }
+
+  var sheet = getUsageSheet_();
+  var values = sheet.getDataRange().getValues();
+  if (!values || values.length < 2) {
+    return { ok: true, isAdmin: true, rows: [], count: 0 };
+  }
+
+  var tz = sheet.getParent().getSpreadsheetTimeZone();
+  var header = values[0].map(function (h) { return String(h == null ? '' : h).trim(); });
+  var lower = header.map(function (h) { return h.toLowerCase(); });
+  var iDate = lower.indexOf('date');
+
+  var rows = [];
+  for (var r = 1; r < values.length; r++) {
+    var raw = values[r];
+    // Skip fully-blank rows.
+    var blank = true;
+    for (var c = 0; c < raw.length; c++) {
+      if (String(raw[c] == null ? '' : raw[c]).trim() !== '') { blank = false; break; }
+    }
+    if (blank) continue;
+
+    var obj = {};
+    for (var k = 0; k < header.length; k++) {
+      var key = header[k] || ('col' + k);
+      var cell = raw[k];
+      // Normalize the Date column back to yyyy-MM-dd (Sheets coerces it to a Date).
+      if (k === iDate) {
+        obj[key] = normDateCell_(cell, tz);
+      } else {
+        obj[key] = String(cell == null ? '' : cell);
+      }
+    }
+    rows.push(obj);
+  }
+  return { ok: true, isAdmin: true, rows: rows, count: rows.length };
+}
+
 // ---------------------------------------------------------------------------
 // action: logUsage
 // ---------------------------------------------------------------------------
@@ -216,25 +323,38 @@ function handleLogUsage_(email, payload) {
       (payload.lastUpdated || '').toString()
     ];
 
-    // Find this user's existing row for the day.
+    // Find this user's existing row(s) for the day. Collect ALL matches so we
+    // can self-heal any duplicates a previous (buggy) version left behind.
+    var tz = sheet.getParent().getSpreadsheetTimeZone();
     var emailKey = canonEmail_(email);
-    var found = -1;
+    var matches = []; // 1-based sheet rows, in ascending order
     if (iDate !== -1 && iEmail !== -1) {
       for (var r = 1; r < values.length; r++) {
-        if (String(values[r][iDate]).trim() === date &&
+        if (normDateCell_(values[r][iDate], tz) === date &&
             canonEmail_(values[r][iEmail]) === emailKey) {
-          found = r + 1; // 1-based sheet row
-          break;
+          matches.push(r + 1); // 1-based sheet row
         }
       }
     }
 
-    if (found !== -1) {
-      sheet.getRange(found, 1, 1, row.length).setValues([row]);
-      return { ok: true, action: 'updated', row: found };
+    if (matches.length === 0) {
+      sheet.appendRow(row);
+      return { ok: true, action: 'appended' };
     }
-    sheet.appendRow(row);
-    return { ok: true, action: 'appended' };
+
+    // Update the first match in place...
+    var target = matches[0];
+    sheet.getRange(target, 1, 1, row.length).setValues([row]);
+
+    // ...and delete any extra duplicates (highest row first, so the earlier
+    // indices stay valid as we delete).
+    var removed = 0;
+    for (var m = matches.length - 1; m >= 1; m--) {
+      sheet.deleteRow(matches[m]);
+      removed++;
+    }
+
+    return { ok: true, action: 'updated', row: target, deduped: removed };
   } finally {
     lock.releaseLock();
   }
@@ -279,6 +399,18 @@ function canonEmail_(s) {
   var domain = email.slice(at + 1);
   var canonical = DOMAIN_ALIASES[domain] || domain;
   return local + '@' + canonical;
+}
+
+// Normalize a "Date" cell to a "yyyy-MM-dd" string for matching.
+// Google Sheets auto-coerces a "2026-08-11" string written to a cell into a
+// real Date object, so on read-back String(cell) is a full date-time
+// ("Tue Aug 11 2026 00:00:00 GMT...") that never equals the incoming
+// "2026-08-11". Format Date cells back to the same day-string on both sides.
+function normDateCell_(v, tz) {
+  if (v instanceof Date) {
+    return Utilities.formatDate(v, tz || 'GMT', 'yyyy-MM-dd');
+  }
+  return String(v == null ? '' : v).trim();
 }
 
 function isYes_(v) {

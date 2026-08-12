@@ -5,6 +5,7 @@ const SomaClient = require('./soma-client');
 const Updater = require('./updater');
 const Stats = require('./stats');
 const access = require('./access');
+const webapp = require('./webapp');
 const UsageSync = require('./usage-sync');
 
 let mainWindow;
@@ -585,6 +586,33 @@ ipcMain.handle('open-dashboard', () => {
 ipcMain.handle('stats:get', () => {
   if (!stats || !isConnected()) return null;
   return stats.getInsights(nowMs());
+});
+
+// Admin: is the signed-in user allowed to see everyone's usage? The web app
+// decides from the caller's unspoofable Google identity + their Role in the
+// "App Access" sheet — the client can only ASK. Fail CLOSED to non-admin on any
+// error (the admin view is additive; hiding it never breaks the app).
+ipcMain.handle('admin:whoami', async () => {
+  if (!isConnected()) return { isAdmin: false, role: '', email: '' };
+  try {
+    const res = await webapp.call('whoAmI', {}, { interactive: true });
+    if (res && res.ok) return { isAdmin: !!res.isAdmin, role: res.role || '', email: res.email || '' };
+  } catch (_) { /* not configured / offline / not authorized → not admin */ }
+  return { isAdmin: false, role: '', email: '' };
+});
+
+// Admin: all users' daily usage rows from the shared BrewUsage sheet. The web
+// app enforces the admin check server-side and returns `forbidden` otherwise,
+// so a non-admin can never pull other people's data even by calling directly.
+ipcMain.handle('admin:getUsage', async () => {
+  if (!isConnected()) return { ok: false, isAdmin: false, rows: [] };
+  try {
+    const res = await webapp.call('getUsage', {}, { interactive: true });
+    if (res && res.ok) return { ok: true, isAdmin: true, rows: Array.isArray(res.rows) ? res.rows : [] };
+    return { ok: false, isAdmin: false, rows: [], error: res && res.error };
+  } catch (err) {
+    return { ok: false, isAdmin: false, rows: [], error: err && err.message };
+  }
 });
 
 // ===== APP LIFECYCLE =====
