@@ -185,6 +185,13 @@ function renderChart() {
 function renderLive() {
   const live = document.getElementById('dashLive');
   if (!live) return;
+  // A teammate / All view is historical sheet data — there's no live signal, so
+  // label it "Recorded" and never pulse.
+  if (dashboardSource() !== 'live') {
+    live.classList.remove('active');
+    setText('dashLiveText', 'Recorded');
+    return;
+  }
   const active = !!(insights && insights.brewing);
   live.classList.toggle('active', active);
   setText('dashLiveText', active ? 'Live' : 'Idle');
@@ -206,8 +213,23 @@ function render() {
 
 let adminRows = null;        // cached rows from the server, or null until loaded
 let adminIsAdmin = false;    // whether the admin panel is active
-let adminFilter = '';        // current search text (lowercased)
+let adminEmail = '';         // the signed-in admin's own email (default selection)
+let adminSelected = '';      // selected user's canonical email, or '' for All
 let adminSort = { key: 'date', dir: -1 }; // default: newest date first
+
+const DASH_DAY_MS = 24 * 60 * 60 * 1000;
+
+// Which data source the WHOLE dashboard is currently showing:
+//   'live' — the admin's own local session log (per-second, real brewing dot).
+//   'user' — one teammate, reconstructed from their BrewUsage sheet rows.
+//   'all'  — every teammate's cumulative totals, reconstructed from the sheet.
+// Non-admins are always 'live'. Default for an admin is 'live' (their own data).
+function dashboardSource() {
+  if (!adminIsAdmin) return 'live';
+  if (!adminSelected) return 'all';
+  if (adminSelected === adminEmail) return 'live';
+  return 'user';
+}
 
 const ADMIN_COLS = [
   { key: 'Date' }, { key: 'Name' }, { key: 'Email' }, { key: 'Total Brewing' },
@@ -222,11 +244,233 @@ const SORT_KEY_TO_COL = {
   appVersion: 'App Version', lastUpdated: 'Last Updated',
 };
 
-function adminRowMatches(row, q) {
-  if (!q) return true;
-  const name = String(row['Name'] || '').toLowerCase();
-  const email = String(row['Email'] || '').toLowerCase();
-  return name.includes(q) || email.includes(q);
+// ---- Reconstructing insights from BrewUsage sheet rows --------------------
+// The cards/chart/mini-cards render from an `insights` object that, for the
+// admin's OWN data, comes live from statsGet(). Other teammates exist only as
+// per-DAY rollups in the sheet (durations stored as pre-formatted strings like
+// "2h 30m"). To let the whole dashboard switch, we rebuild an insights-shaped
+// object from those rows for a selected user (or the cumulative "All" view).
+
+// Parse "2h 30m" / "45m" / "38s" / "1h" back into milliseconds. Tolerant of
+// stray spacing and missing units; returns 0 for blanks/unparseable input.
+function parseDurationMs(str) {
+  const s = String(str == null ? '' : str).trim().toLowerCase();
+  if (!s || s === '0m' || s === '0') return 0;
+  let ms = 0;
+  let matched = false;
+  const h = s.match(/(\d+)\s*h/);
+  if (h) { ms += Number(h[1]) * 3600000; matched = true; }
+  const m = s.match(/(\d+)\s*m/);
+  if (m) { ms += Number(m[1]) * 60000; matched = true; }
+  const sec = s.match(/(\d+)\s*s/);
+  if (sec) { ms += Number(sec[1]) * 1000; matched = true; }
+  // Bare number with no unit → treat as minutes (defensive; shouldn't happen).
+  if (!matched) { const n = Number(s); if (Number.isFinite(n)) ms = n * 60000; }
+  return ms;
+}
+
+// Parse a "YYYY-MM-DD" sheet date to a LOCAL start-of-day epoch ms (matches how
+// stats.js buckets by local day). Returns null if unparseable.
+function parseSheetDate(str) {
+  const m = String(str == null ? '' : str).trim().match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!m) return null;
+  return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])).getTime();
+}
+
+// Start-of-day (local) epoch ms for a timestamp.
+function startOfLocalDay(ts) {
+  const d = new Date(ts);
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+}
+
+// Turn a set of sheet rows (one per day) into a per-day map keyed by local
+// day-start, each { totalMs, slackMs, count, longestMs }. Rows for the same day
+// (e.g. the "All" view merging multiple users) are summed; longest is the max.
+function rollupsByDay(rows) {
+  const byDay = new Map();
+  for (const r of rows) {
+    const dayStart = parseSheetDate(r['Date']);
+    if (dayStart == null) continue;
+    const cur = byDay.get(dayStart) || { totalMs: 0, slackMs: 0, count: 0, longestMs: 0 };
+    cur.totalMs += parseDurationMs(r['Total Brewing']);
+    cur.slackMs += parseDurationMs(r['Slack Time']);
+    cur.count += Number(r['Sessions']) || 0;
+    cur.longestMs = Math.max(cur.longestMs, parseDurationMs(r['Longest Session']));
+    byDay.set(dayStart, cur);
+  }
+  return byDay;
+}
+
+// Sum a day-map over [since, ∞) into the same summary shape stats.js emits.
+// NOTE: from sheet rollups we only know per-day totals, so avgMs is per-DAY
+// average (total / active days), and longestMs is the longest single session
+// recorded on any day in range — a faithful read of what the sheet stores.
+function summarizeDays(byDay, since) {
+  let totalMs = 0, slackMs = 0, count = 0, longestMs = 0, activeDays = 0;
+  for (const [dayStart, v] of byDay) {
+    if (dayStart < since) continue;
+    totalMs += v.totalMs;
+    slackMs += v.slackMs;
+    count += v.count;
+    if (v.longestMs > longestMs) longestMs = v.longestMs;
+    if (v.totalMs > 0 || v.count > 0) activeDays += 1;
+  }
+  return { totalMs, slackMs, count, longestMs, avgMs: activeDays ? Math.round(totalMs / activeDays) : 0 };
+}
+
+// Build 7 daily bars (oldest→newest, today last) from a day-map, matching the
+// shape/labels stats._dailyBuckets produces so renderChart can paint them.
+function dailyBarsFromDays(byDay, now, days) {
+  const todayStart = startOfLocalDay(now);
+  const bars = [];
+  for (let i = days - 1; i >= 0; i--) {
+    const dayStart = todayStart - i * DASH_DAY_MS;
+    const d = new Date(dayStart);
+    const v = byDay.get(dayStart) || { totalMs: 0, slackMs: 0, count: 0 };
+    bars.push({
+      dayStart,
+      label: d.toLocaleDateString(undefined, { weekday: 'short' }),
+      dateLabel: d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }),
+      totalMs: v.totalMs, slackMs: v.slackMs, count: v.count,
+    });
+  }
+  return bars;
+}
+
+// Build 6 monthly bars (oldest→newest) from a day-map.
+function monthlyBarsFromDays(byDay, now, months) {
+  const nowDate = new Date(now);
+  const bars = [];
+  const index = new Map();
+  const key = (y, m) => `${y}-${m}`;
+  for (let i = months - 1; i >= 0; i--) {
+    const d = new Date(nowDate.getFullYear(), nowDate.getMonth() - i, 1);
+    const bar = {
+      key: key(d.getFullYear(), d.getMonth()),
+      label: d.toLocaleDateString(undefined, { month: 'short' }),
+      dateLabel: d.toLocaleDateString(undefined, { month: 'short', year: 'numeric' }),
+      totalMs: 0, slackMs: 0, count: 0,
+    };
+    bars.push(bar);
+    index.set(bar.key, bar);
+  }
+  for (const [dayStart, v] of byDay) {
+    const d = new Date(dayStart);
+    const bar = index.get(key(d.getFullYear(), d.getMonth()));
+    if (bar) { bar.totalMs += v.totalMs; bar.slackMs += v.slackMs; bar.count += v.count; }
+  }
+  return bars;
+}
+
+// Consecutive-day streak ending today (local) from a day-map.
+function streakFromDays(byDay, now) {
+  let streak = 0;
+  let cursor = startOfLocalDay(now);
+  const active = (ds) => { const v = byDay.get(ds); return !!v && (v.totalMs > 0 || v.count > 0); };
+  if (!active(cursor)) cursor -= DASH_DAY_MS;
+  while (active(cursor)) { streak += 1; cursor -= DASH_DAY_MS; }
+  return streak;
+}
+
+// Reconstruct a full insights payload (same shape as stats.getInsights) from the
+// given sheet rows. Used for a selected teammate and for the cumulative "All"
+// view. `brewing` is always false — the sheet has no live/in-progress signal.
+function insightsFromRows(rows, now) {
+  const byDay = rollupsByDay(rows);
+  const todayStart = startOfLocalDay(now);
+  const weekStart = todayStart - 6 * DASH_DAY_MS;
+  const monthStart = new Date(new Date(now).getFullYear(), new Date(now).getMonth(), 1).getTime();
+
+  let firstSessionAt = null;
+  for (const dayStart of byDay.keys()) {
+    if (firstSessionAt == null || dayStart < firstSessionAt) firstSessionAt = dayStart;
+  }
+
+  return {
+    generatedAt: now,
+    brewing: false,
+    today: summarizeDays(byDay, todayStart),
+    week: summarizeDays(byDay, weekStart),
+    month: summarizeDays(byDay, monthStart),
+    allTime: summarizeDays(byDay, 0),
+    streak: streakFromDays(byDay, now),
+    firstSessionAt,
+    charts: {
+      daily: dailyBarsFromDays(byDay, now, 7),
+      weekly: dailyBarsFromDays(byDay, now, 7),
+      monthly: monthlyBarsFromDays(byDay, now, 6),
+    },
+  };
+}
+
+// Distinct users present in the data, keyed by lowercased email. We prefer the
+// most recent non-empty Name we've seen for each email as its display label.
+function adminUsers() {
+  const rows = Array.isArray(adminRows) ? adminRows : [];
+  const byEmail = new Map(); // email -> { email, name }
+  for (const r of rows) {
+    const email = String(r['Email'] || '').trim().toLowerCase();
+    if (!email) continue;
+    const name = String(r['Name'] || '').trim();
+    const cur = byEmail.get(email);
+    if (!cur) byEmail.set(email, { email, name });
+    else if (!cur.name && name) cur.name = name;
+  }
+  return Array.from(byEmail.values())
+    .sort((a, b) => (a.name || a.email).localeCompare(b.name || b.email));
+}
+
+// The label shown in the dropdown / input for a user. Falls back to email when
+// no name is recorded. "All" is represented by the empty selection.
+function adminUserLabel(u) {
+  if (!u) return 'All teammates';
+  return u.name ? `${u.name} (${u.email})` : u.email;
+}
+
+// Populate the datalist with "All teammates" + one entry per user, and set the
+// input's value to reflect the current selection.
+function buildAdminUserList() {
+  const list = document.getElementById('adminUserList');
+  const input = document.getElementById('adminUserSelect');
+  if (!list || !input) return;
+  const users = adminUsers();
+
+  list.replaceChildren();
+  const optAll = document.createElement('option');
+  optAll.value = 'All teammates';
+  list.appendChild(optAll);
+  for (const u of users) {
+    const opt = document.createElement('option');
+    opt.value = adminUserLabel(u); // XSS-safe: value attr, not markup
+    list.appendChild(opt);
+  }
+
+  // Reflect the active selection back into the input's text.
+  if (!adminSelected) {
+    input.value = 'All teammates';
+  } else {
+    const sel = users.find((u) => u.email === adminSelected);
+    input.value = sel ? adminUserLabel(sel) : adminSelected;
+  }
+}
+
+// Resolve whatever the admin typed/picked to a canonical email ('' = All).
+// Accepts the exact dropdown label, a bare name, or a bare email.
+function resolveAdminSelection(text) {
+  const q = String(text || '').trim().toLowerCase();
+  if (!q || q === 'all' || q === 'all teammates') return '';
+  const users = adminUsers();
+  // Exact label match first (what picking from the dropdown produces).
+  const byLabel = users.find((u) => adminUserLabel(u).toLowerCase() === q);
+  if (byLabel) return byLabel.email;
+  // Then exact email, then exact name, then a loose contains.
+  const byEmail = users.find((u) => u.email === q);
+  if (byEmail) return byEmail.email;
+  const byName = users.find((u) => String(u.name || '').toLowerCase() === q);
+  if (byName) return byName.email;
+  const loose = users.find((u) =>
+    u.email.includes(q) || String(u.name || '').toLowerCase().includes(q));
+  return loose ? loose.email : '';
 }
 
 // Sessions sort numerically; everything else as strings. Good enough — the
@@ -248,8 +492,8 @@ function renderAdminTable() {
 
   const all = Array.isArray(adminRows) ? adminRows : [];
   const col = SORT_KEY_TO_COL[adminSort.key] || 'Date';
-  const rows = all
-    .filter((r) => adminRowMatches(r, adminFilter))
+  const rows = selectedRows()
+    .slice()
     .sort((a, b) => compareRows(a, b, col, adminSort.dir));
 
   body.replaceChildren();
@@ -257,7 +501,7 @@ function renderAdminTable() {
     empty.style.display = 'flex';
     empty.querySelector('p').textContent = all.length === 0
       ? 'No team usage recorded yet.'
-      : 'No rows match your filter.';
+      : 'No usage recorded for this teammate yet.';
     return;
   }
   empty.style.display = 'none';
@@ -278,6 +522,7 @@ async function loadAdmin() {
     if (!window.brew.adminWhoAmI) return;
     const who = await window.brew.adminWhoAmI();
     adminIsAdmin = !!(who && who.isAdmin);
+    adminEmail = String((who && who.email) || '').trim().toLowerCase();
     const panel = document.getElementById('adminPanel');
     if (!adminIsAdmin) {
       if (panel) panel.style.display = 'none';
@@ -290,25 +535,88 @@ async function loadAdmin() {
     }
     adminRows = Array.isArray(res.rows) ? res.rows : [];
     if (panel) panel.style.display = '';
-    const hint = document.getElementById('adminHint');
-    if (hint) {
-      const users = new Set(adminRows.map((r) => String(r['Email'] || '').toLowerCase()).filter(Boolean));
-      hint.textContent = `${adminRows.length} row${adminRows.length === 1 ? '' : 's'} · ${users.size} teammate${users.size === 1 ? '' : 's'}`;
-    }
-    renderAdminTable();
+
+    // Reveal the whole-dashboard user picker in the header.
+    const picker = document.getElementById('dashUserPicker');
+    if (picker) picker.style.display = '';
+
+    // Default the view to the admin's OWN data, shown LIVE from the local
+    // session log (source 'live') — the richest, real-time view of themselves.
+    adminSelected = adminEmail;
+
+    updateDashChrome();
+    updateAdminHint();
+    buildAdminUserList();
+    refresh();           // paint cards/chart/mini for the default (live) view
+    renderAdminTable();  // + the detail table
   } catch {
     /* admin view is additive — any failure just leaves it hidden */
   }
 }
 
-// Wire admin search + sortable headers once at load.
+// Refresh the detail-table sub-title + heading to reflect the current pick.
+function updateAdminHint() {
+  const hint = document.getElementById('adminHint');
+  const tableTitle = document.getElementById('adminTableTitle');
+  if (!adminSelected) {
+    const totalUsers = adminUsers().length;
+    if (hint) hint.textContent = `All teammates · ${totalUsers} ${totalUsers === 1 ? 'person' : 'people'}`;
+    if (tableTitle) tableTitle.textContent = 'Daily Breakdown — All Teammates';
+    return;
+  }
+  const u = adminUsers().find((x) => x.email === adminSelected);
+  const who = u ? (u.name || u.email) : adminSelected;
+  if (hint) hint.textContent = `Daily rows for ${who}`;
+  if (tableTitle) tableTitle.textContent = 'Daily Breakdown';
+}
+
+// Commit whatever is in the input to the active selection, then repaint the
+// WHOLE dashboard (cards, chart, mini-cards) + the detail table for the pick.
+function applyAdminSelection() {
+  const input = document.getElementById('adminUserSelect');
+  if (!input) return;
+  const next = resolveAdminSelection(input.value);
+  const changed = next !== adminSelected;
+  adminSelected = next;
+  buildAdminUserList(); // normalize the input text to the canonical label
+  updateDashChrome();
+  updateAdminHint();
+  if (changed) refresh(); // swaps the data source and repaints everything
+  renderAdminTable();
+}
+
+// Update the page title/subtitle to reflect whose data is on screen.
+function updateDashChrome() {
+  const title = document.getElementById('dashTitle');
+  const subtitle = document.getElementById('dashSubtitle');
+  const source = dashboardSource();
+  if (source === 'live') {
+    if (title) title.textContent = 'Your Brew Insights';
+    if (subtitle) subtitle.textContent = "How much you've kept your Mac awake";
+  } else if (source === 'all') {
+    if (title) title.textContent = 'Team Brew Insights';
+    if (subtitle) subtitle.textContent = "Everyone's brewing, combined";
+  } else {
+    const u = adminUsers().find((x) => x.email === adminSelected);
+    const who = u ? (u.name || u.email) : adminSelected;
+    if (title) title.textContent = `${who}'s Brew Insights`;
+    if (subtitle) subtitle.textContent = 'From their recorded daily usage';
+  }
+}
+
+// Wire the user dropdown + sortable headers once at load.
 function wireAdminControls() {
-  const search = document.getElementById('adminSearch');
-  if (search) {
-    search.addEventListener('input', () => {
-      adminFilter = search.value.trim().toLowerCase();
-      renderAdminTable();
+  const input = document.getElementById('adminUserSelect');
+  if (input) {
+    // 'change' fires when a datalist option is picked or the field is committed;
+    // 'blur' catches free typing. Enter also commits.
+    input.addEventListener('change', applyAdminSelection);
+    input.addEventListener('blur', applyAdminSelection);
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); input.blur(); }
     });
+    // Select-all on focus so a click lets the admin type a fresh name at once.
+    input.addEventListener('focus', () => input.select());
   }
   document.querySelectorAll('.admin-table th[data-sort]').forEach((th) => {
     th.addEventListener('click', () => {
@@ -322,7 +630,28 @@ function wireAdminControls() {
 
 // ---- Data + events ---------------------------------------------------------
 
+// Rows feeding the currently-selected view: one teammate, or everyone for All.
+function selectedRows() {
+  const all = Array.isArray(adminRows) ? adminRows : [];
+  if (!adminSelected) return all; // All teammates
+  return all.filter((r) => String(r['Email'] || '').trim().toLowerCase() === adminSelected);
+}
+
+// Repaint the entire dashboard from the reconstructed insights of a non-live
+// selection (a teammate or the cumulative All view). No network — the sheet
+// rows are already cached in adminRows.
+function renderFromSheet() {
+  insights = insightsFromRows(selectedRows(), Date.now());
+  render();
+}
+
 async function refresh() {
+  // For a teammate / All selection the data is the cached sheet rows, not the
+  // local session log — rebuild from those instead of pulling statsGet().
+  if (dashboardSource() !== 'live') {
+    renderFromSheet();
+    return;
+  }
   try {
     const data = await window.brew.statsGet();
     if (data) {
@@ -351,8 +680,9 @@ if (window.brew.onStatsRefresh) {
 // Live update: while a session is in progress the numbers change every second,
 // so re-pull once per second. When idle we still refresh (cheaply) so the view
 // stays current if data changes from elsewhere; the in-place bar updates make
-// this smooth with no flicker.
-setInterval(refresh, 1000);
+// this smooth with no flicker. A teammate / All view is static sheet data, so
+// we skip the tick there (the selection handler repaints on demand).
+setInterval(() => { if (dashboardSource() === 'live') refresh(); }, 1000);
 
 refresh();
 

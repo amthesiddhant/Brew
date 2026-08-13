@@ -15,14 +15,24 @@
       <div class="dash-title-wrap">
         <img src="assets/icon.png" alt="Brew" class="dash-logo">
         <div>
-          <h1 class="dash-title">Your Brew Insights</h1>
+          <h1 class="dash-title" id="dashTitle">Your Brew Insights</h1>
           <p class="dash-subtitle" id="dashSubtitle">How much you've kept your Mac awake</p>
         </div>
       </div>
-      <!-- Live indicator: pulses while a brew session is in progress. -->
-      <div class="dash-live" id="dashLive" title="Updating live">
-        <span class="dash-live-dot"></span>
-        <span class="dash-live-text" id="dashLiveText">Live</span>
+      <div class="dash-header-right">
+        <!-- Admin-only: pick whose data the WHOLE dashboard shows. Hidden unless
+             the server confirms an Admin/Owner role. Defaults to the admin's own
+             data; "All teammates" shows the team's cumulative totals. -->
+        <div class="dash-user-picker" id="dashUserPicker" style="display:none;">
+          <input id="adminUserSelect" class="admin-search" list="adminUserList"
+                 placeholder="Search a teammate…" autocomplete="off" spellcheck="false">
+          <datalist id="adminUserList"></datalist>
+        </div>
+        <!-- Live indicator: pulses while a brew session is in progress. -->
+        <div class="dash-live" id="dashLive" title="Updating live">
+          <span class="dash-live-dot"></span>
+          <span class="dash-live-text" id="dashLiveText">Live</span>
+        </div>
       </div>
     </header>
 
@@ -125,11 +135,8 @@
     <section class="admin-panel" id="adminPanel" style="display:none;">
       <div class="chart-head">
         <div>
-          <h2 class="chart-title">Team Usage</h2>
+          <h2 class="chart-title" id="adminTableTitle">Daily Breakdown</h2>
           <p class="chart-hint" id="adminHint">Every teammate's daily brewing</p>
-        </div>
-        <div class="admin-controls">
-          <input type="search" id="adminSearch" class="admin-search" placeholder="Filter by name or email…" autocomplete="off">
         </div>
       </div>
       <div class="admin-table-wrap">

@@ -1406,6 +1406,10 @@ body.brewing::before {
 }
 .dash-subtitle { font-size: 13px; color: var(--text-secondary); margin-top: 2px; }
 
+/* Right side of the dashboard header: admin user picker + live indicator. */
+.dash-header-right { display: flex; align-items: center; gap: 12px; }
+.dash-user-picker { display: flex; align-items: center; }
+
 /* Live indicator — pulses while a brew session is in progress. */
 .dash-live {
   display: flex;
@@ -1776,7 +1780,7 @@ body.brewing::before {
   padding: 8px 12px;
   color: var(--text-primary);
   font-size: 13px;
-  min-width: 220px;
+  min-width: 280px;
   outline: none;
 }
 .admin-search::placeholder { color: var(--text-muted); }
