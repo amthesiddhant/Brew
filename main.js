@@ -1,9 +1,10 @@
 const { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage, shell, Notification } = require('electron');
-const { spawn } = require('child_process');
+const { spawn, execFile } = require('child_process');
 const path = require('path');
 const SomaClient = require('./soma-client');
 const Updater = require('./updater');
 const Stats = require('./stats');
+const Settings = require('./settings');
 const access = require('./access');
 const webapp = require('./webapp');
 const UsageSync = require('./usage-sync');
@@ -54,8 +55,28 @@ let isAwake = false;
 let isSlackMode = false;
 let mouseJiggleInterval = null;
 
+// User settings (auto-off timer + idle/battery guards). Instantiated in
+// whenReady (needs app.getPath).
+let settings = null;
+
+// Auto-off ("Brew for…"): every brew is started with a duration, so `brewEndsAt`
+// is the epoch-ms deadline and `autoOffTimer` fires stopCaffeinate at it. The
+// renderer reads brewEndsAt to paint a countdown.
+let autoOffTimer = null;
+let brewEndsAt = null;
+// Poller (every AUTO_STOP_TICK_MS while brewing) for the lid + battery guards.
+let autoStopPoll = null;
+// Why the last auto-stop happened, so we notify with the right message and the
+// renderer/tray can reset cleanly. One of: 'timer' | 'lid' | 'battery' | null.
+let lastAutoStopReason = null;
+
 // Mouse jiggle interval in ms (every 4 minutes - well under Slack's 10min timeout)
 const JIGGLE_INTERVAL = 4 * 60 * 1000;
+// How often the lid/battery guard poller runs while brewing.
+const AUTO_STOP_TICK_MS = 30 * 1000;
+// Fixed low-battery cutoff: when the battery guard is on and we're on battery
+// power at or below this charge, brewing stops. Not user-configurable.
+const BATTERY_GUARD_PCT = 10;
 
 const CURRENT_VERSION = require('./package.json').version;
 
@@ -199,7 +220,22 @@ function updateTrayMenu() {
   let statusLabel = 'Idle';
   if (isAwake) {
     statusLabel = isSlackMode ? 'Brewing + Slack' : 'Brewing';
+    if (brewEndsAt) {
+      const leftMin = Math.max(0, Math.round((brewEndsAt - nowMs()) / 60000));
+      statusLabel += ` · ${leftMin}m left`;
+    }
   }
+
+  // Duration presets for the "Brew for…" submenu (minutes). Always bounded —
+  // the timer maxes out at 8 hours; there is no open-ended brew.
+  const DURATION_PRESETS = [
+    { label: '15 minutes', min: 15 },
+    { label: '30 minutes', min: 30 },
+    { label: '1 hour', min: 60 },
+    { label: '2 hours', min: 120 },
+    { label: '4 hours', min: 240 },
+    { label: '8 hours', min: 480 },
+  ];
 
   const contextMenu = Menu.buildFromTemplate([
     {
@@ -216,6 +252,17 @@ function updateTrayMenu() {
           startCaffeinate();
         }
       }
+    },
+    {
+      label: 'Brew for',
+      enabled: !isAwake, // pick a duration only when starting fresh
+      submenu: DURATION_PRESETS.map((p) => ({
+        label: p.label,
+        click: () => {
+          if (settings) settings.set({ autoOffMin: p.min });
+          startCaffeinate(p.min > 0 ? p.min * 60 * 1000 : 0);
+        },
+      })),
     },
     {
       label: `Slack Mode: ${isSlackMode ? 'ON' : 'OFF'}`,
@@ -276,7 +323,11 @@ function updateTrayMenu() {
 
 // ===== CAFFEINATE (Keep Mac Awake) =====
 
-function startCaffeinate() {
+// Start brewing. durationMs (optional) auto-stops after that long. Every brew
+// is bounded: a missing/zero duration falls back to the saved autoOffMin preset
+// (15 min – 8 h), so the tray "Start Brewing" and the renderer both honor the
+// user's last choice.
+function startCaffeinate(durationMs) {
   if (!isConnected()) return; // gated: no SOMA connection, no brewing
   if (caffeinateProcess) return;
 
@@ -288,17 +339,38 @@ function startCaffeinate() {
   caffeinateProcess.on('error', (err) => {
     console.error('Failed to start caffeinate:', err);
     isAwake = false;
+    clearAutoOff();
+    stopAutoStopPoll();
     notifyRenderer();
   });
 
   caffeinateProcess.on('exit', () => {
     caffeinateProcess = null;
     isAwake = false;
+    clearAutoOff();
+    stopAutoStopPoll();
     notifyRenderer();
     updateTrayMenu();
   });
 
   isAwake = true;
+  lastAutoStopReason = null;
+
+  // Resolve the auto-off duration. Every brew is bounded now, so a positive
+  // arg wins; anything else (undefined/0/invalid) falls back to the saved
+  // preset (itself clamped to 15 min – 8 h).
+  let ms = typeof durationMs === 'number' && durationMs > 0 ? durationMs : 0;
+  if (!ms) {
+    const mins = settings ? settings.get().autoOffMin : 60;
+    ms = mins * 60 * 1000;
+  }
+  clearAutoOff();
+  brewEndsAt = nowMs() + ms;
+  autoOffTimer = setTimeout(() => autoStop('timer'), ms);
+
+  // Start the lid/battery guard poller (both guards are always on).
+  startAutoStopPoll();
+
   // Open a usage session for this brew stretch.
   if (stats) stats.startSession(nowMs(), isSlackMode);
   notifyRenderer();
@@ -311,12 +383,120 @@ function stopCaffeinate() {
     caffeinateProcess = null;
   }
   isAwake = false;
+  clearAutoOff();
+  stopAutoStopPoll();
   // Close the usage session (records duration + Slack time).
   if (stats) stats.endSession(nowMs());
   // Mirror the day's totals to the usage sheet (best-effort, debounced).
   scheduleUsageSync();
   notifyRenderer();
   updateTrayMenu();
+}
+
+// ===== SMART AUTO-OFF (timer + idle + battery) =====
+
+// Cancel a pending auto-off timer and clear its deadline.
+function clearAutoOff() {
+  if (autoOffTimer) {
+    clearTimeout(autoOffTimer);
+    autoOffTimer = null;
+  }
+  brewEndsAt = null;
+}
+
+// Common path for every automatic stop (timer expiry, idle, low battery). Stops
+// brewing exactly like a manual OFF — including Slack mode — then notifies.
+function autoStop(reason) {
+  if (!isAwake) return;
+  lastAutoStopReason = reason;
+  if (isSlackMode) stopMouseJiggle();
+  stopCaffeinate();
+  notifyAutoStopped(reason);
+}
+
+function startAutoStopPoll() {
+  if (autoStopPoll) return;
+  autoStopPoll = setInterval(evaluateAutoStop, AUTO_STOP_TICK_MS);
+}
+
+function stopAutoStopPoll() {
+  if (autoStopPoll) {
+    clearInterval(autoStopPoll);
+    autoStopPoll = null;
+  }
+}
+
+// Read battery charge % + whether we're on battery via `pmset -g batt`. Async
+// (callback) so we never block the main thread; best-effort — on any error the
+// guard simply doesn't trigger this tick. Output line looks like:
+//   -InternalBattery-0 (id=...)\t82%; discharging; 3:14 remaining present: true
+// and the header line says "Now drawing from 'Battery Power'|'AC Power'".
+function readBattery(cb) {
+  execFile('pmset', ['-g', 'batt'], { timeout: 4000 }, (err, stdout) => {
+    if (err || !stdout) return cb(null);
+    const onBattery = /drawing from ['"]?Battery/i.test(stdout);
+    const m = stdout.match(/(\d+)%/);
+    const pct = m ? Number(m[1]) : null;
+    if (pct == null) return cb(null);
+    cb({ pct, onBattery });
+  });
+}
+
+// Whether the laptop lid is currently closed. macOS exposes this as
+// `AppleClamshellState = Yes` in the IORegistry. Async (callback); best-effort —
+// on any error or on a desktop Mac (key absent) we report "not closed" so the
+// guard never fires spuriously.
+function readLidClosed(cb) {
+  execFile('ioreg', ['-r', '-k', 'AppleClamshellState', '-d', '4'], { timeout: 4000 }, (err, stdout) => {
+    if (err || !stdout) return cb(false);
+    const m = stdout.match(/"AppleClamshellState"\s*=\s*(Yes|No)/i);
+    cb(!!m && /yes/i.test(m[1]));
+  });
+}
+
+// Runs on the poll tick while brewing. Both guards are always on (built-in
+// behavior, not user options): stop brewing when the laptop lid is closed, or
+// when on battery at/below the fixed 10% cutoff.
+function evaluateAutoStop() {
+  if (!isAwake) return;
+
+  // Lid guard: stop brewing when the laptop lid is closed.
+  readLidClosed((closed) => {
+    if (!isAwake) return;
+    if (closed) autoStop('lid');
+  });
+
+  // Battery guard: only when actually running on battery, at/below 10%.
+  readBattery((batt) => {
+    if (!batt || !isAwake) return;
+    if (batt.onBattery && batt.pct <= BATTERY_GUARD_PCT) {
+      autoStop('battery');
+    }
+  });
+}
+
+// Fire a native notification explaining why brewing stopped on its own, so a
+// backgrounded/tray app doesn't just silently go quiet.
+function notifyAutoStopped(reason) {
+  if (!Notification.isSupported()) return;
+  const body = {
+    timer: 'Your Brew timer finished — your Mac can sleep now.',
+    lid: 'You closed the lid, so Brew stopped to let your Mac sleep.',
+    battery: 'Battery dropped to 10%, so Brew stopped to save power.',
+  }[reason] || 'Brewing has stopped.';
+
+  const iconPath = path.join(__dirname, 'assets', 'icon.png');
+  const n = new Notification({
+    title: 'Brew finished ☕',
+    body,
+    silent: false,
+    icon: require('fs').existsSync(iconPath) ? iconPath : undefined,
+  });
+  n.on('click', () => {
+    if (process.platform === 'darwin') app.dock.show();
+    if (mainWindow && !mainWindow.isDestroyed()) { mainWindow.show(); mainWindow.focus(); }
+  });
+  n.show();
 }
 
 // ===== MOUSE JIGGLE (Keep Slack Online) =====
@@ -397,9 +577,16 @@ function stopMouseJiggle() {
 
 // ===== NOTIFY RENDERER =====
 
+// The status the renderer paints its UI from. `brewEndsAt` (epoch ms or null)
+// drives the countdown bar; `autoStopReason` lets the UI show why a brew ended
+// on its own.
+function statusPayload() {
+  return { isAwake, isSlackMode, brewEndsAt, autoStopReason: lastAutoStopReason };
+}
+
 function notifyRenderer() {
   if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.webContents.send('status-changed', { isAwake, isSlackMode });
+    mainWindow.webContents.send('status-changed', statusPayload());
   }
   // Keep the dashboard live: any start/stop changes the numbers.
   if (dashboardWindow && !dashboardWindow.isDestroyed()) {
@@ -456,20 +643,29 @@ ipcMain.handle('toggle-awake', () => {
   } else {
     startCaffeinate();
   }
-  return { isAwake, isSlackMode };
+  return statusPayload();
 });
 
-ipcMain.handle('get-status', () => ({ isAwake, isSlackMode }));
+ipcMain.handle('get-status', () => statusPayload());
 
-ipcMain.handle('turn-on', () => {
-  startCaffeinate();
-  return { isAwake, isSlackMode };
+// Optional { durationMs }: auto-off after that long (0/omitted = use the saved
+// preset; explicit 0 = open-ended). Also persists the choice as the new preset
+// so the UI and tray default to it next time.
+ipcMain.handle('turn-on', (_evt, opts = {}) => {
+  const durationMs = opts && typeof opts.durationMs === 'number' ? opts.durationMs : undefined;
+  // Persist a positive duration as the new preset (clamped in settings). A
+  // missing/zero duration means "use the saved preset" — don't overwrite it.
+  if (settings && typeof durationMs === 'number' && durationMs > 0) {
+    settings.set({ autoOffMin: Math.round(durationMs / 60000) });
+  }
+  startCaffeinate(durationMs);
+  return statusPayload();
 });
 
 ipcMain.handle('turn-off', () => {
   stopCaffeinate();
   if (isSlackMode) stopMouseJiggle();
-  return { isAwake, isSlackMode };
+  return statusPayload();
 });
 
 ipcMain.handle('toggle-slack-mode', () => {
@@ -478,7 +674,18 @@ ipcMain.handle('toggle-slack-mode', () => {
   } else {
     startMouseJiggle();
   }
-  return { isAwake, isSlackMode };
+  return statusPayload();
+});
+
+// ------------------------------ Settings ----------------------------------
+// Just the auto-off timer preset (autoOffMin). Persisted in userData so the
+// window pills and tray submenu default to the user's last pick. The lid and
+// low-battery guards are always-on and not settings.
+ipcMain.handle('settings:get', () => (settings ? settings.get() : null));
+
+ipcMain.handle('settings:set', (_evt, patch = {}) => {
+  if (!settings) return null;
+  return settings.set(patch);
 });
 
 // ----------------------------- App updates --------------------------------
@@ -625,6 +832,9 @@ app.whenReady().then(() => {
 
   // Usage stats recorder (persists sessions under userData).
   stats = new Stats();
+
+  // User settings (auto-off timer + idle/battery guards).
+  settings = new Settings();
 
   // Usage-sheet sync (best-effort mirror to Google Sheets via the Web App).
   usageSync = new UsageSync({

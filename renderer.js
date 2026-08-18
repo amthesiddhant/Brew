@@ -2,6 +2,12 @@ let isAwake = false;
 let isSlackMode = false;
 let timerInterval = null;
 let startTime = null;
+// Epoch-ms deadline for an auto-off brew (null = open-ended, count up).
+let brewEndsAt = null;
+// The user's currently-selected preset in minutes. Every brew is bounded
+// (15 min – 8 h); defaults to 1 h until settings load. Used to start a brew
+// with the right duration and to highlight the active pill.
+let selectedDurationMin = 60;
 
 // DOM Elements
 const appIcon = document.getElementById('appIcon');
@@ -11,12 +17,16 @@ const statusDot = document.getElementById('statusDot');
 const btnOn = document.getElementById('btnOn');
 const btnOff = document.getElementById('btnOff');
 const timerSection = document.getElementById('timerSection');
+const timerLabel = document.getElementById('timerLabel');
 const timerValue = document.getElementById('timerValue');
 const timerBarFill = document.getElementById('timerBarFill');
 const toggleSwitch = document.getElementById('toggleSwitch');
 const toggleKnob = document.getElementById('toggleKnob');
 const slackDesc = document.getElementById('slackDesc');
 const slackToggleRow = document.querySelector('.slack-toggle-row');
+// Auto-off UI.
+const durationRow = document.getElementById('durationRow');
+const durationPills = document.getElementById('durationPills');
 
 // Create floating coffee beans
 function createCoffeeBeans() {
@@ -265,11 +275,12 @@ if (accessLogoutBtn) {
   });
 }
 
-// Turn ON
+// Turn ON — brew for the selected (always bounded) duration.
 async function turnOn() {
   btnOn.style.transform = 'scale(0.95)';
   setTimeout(() => { btnOn.style.transform = ''; }, 150);
-  const status = await window.brew.turnOn();
+  const durationMs = (selectedDurationMin > 0 ? selectedDurationMin : 60) * 60 * 1000;
+  const status = await window.brew.turnOn(durationMs);
   updateUI(status);
 }
 
@@ -300,6 +311,7 @@ async function toggleSlackMode() {
 function updateUI(status) {
   isAwake = status.isAwake;
   isSlackMode = status.isSlackMode;
+  brewEndsAt = status.brewEndsAt || null;
 
   // Brew state
   if (isAwake) {
@@ -307,6 +319,8 @@ function updateUI(status) {
     btnOn.classList.add('active');
     btnOff.classList.remove('active');
     timerSection.classList.add('active');
+    // Can't change the duration mid-brew — stop first. Dim the picker.
+    if (durationRow) durationRow.classList.add('disabled');
 
     if (isSlackMode) {
       statusText.textContent = 'Brewing + Slack Online';
@@ -320,7 +334,9 @@ function updateUI(status) {
     btnOn.classList.remove('active');
     btnOff.classList.add('active');
     timerSection.classList.remove('active');
-    statusText.textContent = 'Your Mac can sleep';
+    if (durationRow) durationRow.classList.remove('disabled');
+    // Surface why brewing ended if it stopped on its own.
+    statusText.textContent = autoStopMessage(status.autoStopReason) || 'Your Mac can sleep';
     stopTimer();
   }
 
@@ -336,7 +352,29 @@ function updateUI(status) {
   }
 }
 
-// Timer functions
+// A short message for why brewing ended on its own (null → normal manual stop).
+function autoStopMessage(reason) {
+  return {
+    timer: 'Timer finished — your Mac can sleep',
+    lid: 'Lid closed — brewing stopped',
+    battery: 'Low battery — brewing stopped',
+  }[reason] || '';
+}
+
+// Format ms → HH:MM:SS.
+function fmtClock(ms) {
+  const total = Math.max(0, Math.floor(ms / 1000));
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+}
+
+// Timer functions. Two modes:
+//   • Countdown — when brewEndsAt is set (a duration was chosen): show time
+//     remaining and deplete the bar toward the deadline.
+//   • Count up  — open-ended brew: show elapsed and loop the bar each minute
+//     (the original behavior).
 function startTimer() {
   if (timerInterval) return;
   startTime = Date.now();
@@ -350,24 +388,71 @@ function stopTimer() {
     timerInterval = null;
   }
   startTime = null;
+  if (timerLabel) timerLabel.textContent = 'Brewing for';
   timerValue.textContent = '00:00:00';
   timerBarFill.style.width = '0%';
 }
 
 function updateTimer() {
+  const now = Date.now();
+
+  if (brewEndsAt) {
+    // Countdown mode.
+    const total = brewEndsAt - (startTime || now);
+    const remaining = brewEndsAt - now;
+    if (timerLabel) timerLabel.textContent = 'Time left';
+    timerValue.textContent = fmtClock(remaining);
+    const pct = total > 0 ? Math.max(0, Math.min(100, (remaining / total) * 100)) : 0;
+    timerBarFill.style.width = `${pct}%`;
+    return;
+  }
+
+  // Count-up mode (open-ended).
   if (!startTime) return;
-
-  const elapsed = Math.floor((Date.now() - startTime) / 1000);
-  const hours = Math.floor(elapsed / 3600);
-  const minutes = Math.floor((elapsed % 3600) / 60);
-  const seconds = elapsed % 60;
-
-  timerValue.textContent =
-    `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
-
-  // Animate timer bar (loops every 60 seconds)
-  const progress = (seconds / 60) * 100;
+  if (timerLabel) timerLabel.textContent = 'Brewing for';
+  const elapsed = Math.floor((now - startTime) / 1000);
+  timerValue.textContent = fmtClock(elapsed * 1000);
+  // Animate timer bar (loops every 60 seconds).
+  const progress = ((elapsed % 60) / 60) * 100;
   timerBarFill.style.width = `${progress}%`;
+}
+
+// ===== AUTO-OFF: duration presets + idle/battery guards =====
+
+// Highlight the pill matching selectedDurationMin.
+function paintDurationPills() {
+  if (!durationPills) return;
+  durationPills.querySelectorAll('.duration-pill').forEach((pill) => {
+    pill.classList.toggle('active', Number(pill.dataset.min) === selectedDurationMin);
+  });
+}
+
+// Wire the preset pills: clicking one selects that duration (persisted
+// immediately so the choice sticks across launches, without starting a brew).
+if (durationPills) {
+  durationPills.addEventListener('click', (e) => {
+    const pill = e.target.closest('.duration-pill');
+    if (!pill || isAwake) return; // locked while brewing
+    selectedDurationMin = Number(pill.dataset.min) || 60;
+    paintDurationPills();
+    window.brew.settingsSet({ autoOffMin: selectedDurationMin }).catch(() => {});
+  });
+}
+
+// Apply a full settings object to the UI (just the duration pills — the
+// lid/battery guards are always-on built-in behavior, not shown here).
+function applySettings(s) {
+  if (!s) return;
+  selectedDurationMin = Number(s.autoOffMin) || 60;
+  paintDurationPills();
+}
+
+// Load persisted settings into the UI at startup.
+async function initSettings() {
+  try {
+    const s = await window.brew.settingsGet();
+    applySettings(s);
+  } catch { /* defaults already in the DOM */ }
 }
 
 // ===== UPDATE FEATURE =====
@@ -787,3 +872,4 @@ window.brew.onTriggerUpdateCheck(() => {
 // Initialize on load
 init();
 initVersion();
+initSettings();

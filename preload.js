@@ -3,9 +3,15 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('brew', {
   toggleAwake: () => ipcRenderer.invoke('toggle-awake'),
   getStatus: () => ipcRenderer.invoke('get-status'),
-  turnOn: () => ipcRenderer.invoke('turn-on'),
+  // durationMs (optional): auto-off after that long. Omit/0 to use the saved
+  // preset. Every brew is bounded — the timer maxes out at 8 hours.
+  turnOn: (durationMs) => ipcRenderer.invoke('turn-on', { durationMs }),
   turnOff: () => ipcRenderer.invoke('turn-off'),
   toggleSlackMode: () => ipcRenderer.invoke('toggle-slack-mode'),
+  // Auto-off timer preset. get() → { autoOffMin }; set(patch) merges + returns
+  // the new value. (The lid/battery guards are always-on and not settings.)
+  settingsGet: () => ipcRenderer.invoke('settings:get'),
+  settingsSet: (patch) => ipcRenderer.invoke('settings:set', patch),
   getAppVersion: () => ipcRenderer.invoke('get-app-version'),
   // Access gate: check the signed-in SOMA user against the shared allowlist.
   // Returns { allowed, email, reason, offline }.

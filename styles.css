@@ -687,6 +687,63 @@ body.brewing::before {
   50% { opacity: 0.7; box-shadow: 0 0 0 6px rgba(74, 163, 99, 0); }
 }
 
+/* ===== AUTO-OFF: duration presets ===== */
+
+.duration-row {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  -webkit-app-region: no-drag;
+  transition: opacity 0.3s ease;
+}
+
+/* Locked while brewing — dim and ignore clicks. */
+.duration-row.disabled {
+  opacity: 0.4;
+  pointer-events: none;
+}
+
+.duration-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.duration-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.duration-pill {
+  flex: 1;
+  min-width: 44px;
+  padding: 7px 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 9px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  white-space: nowrap;
+}
+
+.duration-pill:hover {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.15);
+}
+
+.duration-pill.active {
+  color: #4aa363;
+  background: rgba(74, 163, 99, 0.12);
+  border-color: rgba(74, 163, 99, 0.35);
+}
+
 /* Smooth entrance animation */
 .container > * {
   animation: slide-up 0.6s ease-out backwards;

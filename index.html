@@ -68,6 +68,20 @@
       </button>
     </div>
 
+    <!-- Auto-off duration presets: pick how long to brew before Brew stops
+         itself. Every brew is bounded — the timer maxes out at 8 hours. -->
+    <div class="duration-row" id="durationRow" role="group" aria-label="Brew for">
+      <span class="duration-label">Brew for</span>
+      <div class="duration-pills" id="durationPills">
+        <button class="duration-pill" data-min="15">15m</button>
+        <button class="duration-pill" data-min="30">30m</button>
+        <button class="duration-pill active" data-min="60">1h</button>
+        <button class="duration-pill" data-min="120">2h</button>
+        <button class="duration-pill" data-min="240">4h</button>
+        <button class="duration-pill" data-min="480">8h</button>
+      </div>
+    </div>
+
     <!-- Slack Mode Toggle -->
     <div class="slack-toggle" id="slackToggle">
       <div class="slack-toggle-row" onclick="toggleSlackMode()">
@@ -94,7 +108,7 @@
 
     <!-- Timer -->
     <div class="timer" id="timerSection">
-      <p class="timer-label">Brewing for</p>
+      <p class="timer-label" id="timerLabel">Brewing for</p>
       <p class="timer-value" id="timerValue">00:00:00</p>
       <div class="timer-bar">
         <div class="timer-bar-fill" id="timerBarFill"></div>
